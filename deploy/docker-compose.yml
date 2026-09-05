@@ -1,0 +1,20 @@
+# 中央数据库（V1 记忆层迁移用；V0 用 SQLite 即可）
+services:
+  postgres:
+    image: pgvector/pgvector:pg17
+    environment:
+      POSTGRES_USER: fabric
+      POSTGRES_PASSWORD: fabric-dev-change-me
+      POSTGRES_DB: fabric
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fabric"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  pgdata:

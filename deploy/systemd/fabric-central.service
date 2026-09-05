@@ -1,0 +1,13 @@
+[Unit]
+Description=Agent Fabric Central
+After=network-online.target
+
+[Service]
+WorkingDirectory=/opt/agent-fabric
+EnvironmentFile=/opt/agent-fabric/.env
+ExecStart=/opt/agent-fabric/.venv/bin/fabric-central
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
