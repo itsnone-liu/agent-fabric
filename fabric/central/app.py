@@ -44,6 +44,11 @@ def create_app(db_path: str | None = None) -> FastAPI:
     async def tasks(limit: int = 50):
         return {"tasks": store.list_tasks(limit)}
 
+    @app.get("/api/tasks/{task_id}")
+    async def task_one(task_id: str):
+        t = store.get_task(task_id)
+        return t or {"error": "not found"}
+
     @app.get("/api/events")
     async def events(limit: int = 200, task_id: str | None = None):
         return {"events": store.list_events(limit, task_id)}
