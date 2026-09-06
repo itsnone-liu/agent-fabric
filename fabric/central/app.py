@@ -16,7 +16,7 @@ from ..shared import protocol as P
 from .channels import ChannelHub, ConsoleChannel
 from .memory import MemoryManager
 from .registry import NodeRegistry
-from .router import Action, help_text, parse_command
+from .router import Action, help_text, parse_command, KNOWN_HARNESSES
 from .store import Store
 from .tasks import TERMINAL, TaskManager
 
@@ -28,8 +28,9 @@ def create_app(db_path: str | None = None) -> FastAPI:
     memory = MemoryManager(store)
     tm = TaskManager(store, registry, hub, memory=memory)
     from .session import SessionManager
-    session = SessionManager(online_nodes=lambda: [n["node_id"] for n in registry.snapshot()
-                                                   if n.get("status") == "online"])
+    session = SessionManager(online_nodes=lambda: {n["node_id"]: (n.get("info") or {})
+                                                   for n in registry.snapshot()
+                                                   if n.get("status") == "online"})
     tm.session = session  # RESULT 后自动续跑排队意见（V0.9 会话化）
 
     app = FastAPI(title="Agent Fabric Central", version="0.1.0")
@@ -144,7 +145,29 @@ def create_app(db_path: str | None = None) -> FastAPI:
         if act.kind == "use":
             if not act.node:
                 return "用法：use <麦片|米线|节点id>（或裸 @节点）\n" + session.snapshot(), None
-            return session.switch(act.node), None
+            msg = session.switch(act.node)
+            avail = session.node_harnesses(act.node)
+            if act.harness and act.harness != "echo":  # use 汤圆 codex 显式指定
+                session.harness = act.harness if act.harness in avail else None
+                if not session.harness:
+                    msg += f"\n⚠️ {act.node} 没有 harness {act.harness}（可用：{'/'.join(avail) or '无'}）"
+            else:
+                session.harness = session.pick_harness(act.node)
+            if session.harness:
+                msg += f"\nharness：{session.harness}" + \
+                       (f"（可切换：{'/'.join(avail)}，说 harness <名>）" if len(avail) > 1 else "")
+            return msg, None
+        if act.kind == "harness":
+            h = (act.harness or "").strip()
+            if h not in KNOWN_HARNESSES:
+                return f"未知 harness {h}（已知：{'/'.join(sorted(KNOWN_HARNESSES - {'echo'}))}）", None
+            if not session.focus:
+                return "先 use 选主机，再切 harness", None
+            avail = session.node_harnesses(session.focus)
+            if h not in avail:
+                return f"{session.focus} 没有 {h}（可用：{'/'.join(avail) or '无'}）", None
+            session.harness = h
+            return f"✅ harness 已切：{h}（{session.focus}）", None
         if act.kind == "unknown":
             # 会话式自然语言（V0.9）：选完主机后直接说话即任务
             if not session.focus:
@@ -155,7 +178,12 @@ def create_app(db_path: str | None = None) -> FastAPI:
                 session.followups.append(act.raw)
                 return (f"📥 已排队（第 {len(session.followups)} 条追加意见），"
                         f"{last[0]['id']} 完成后自动续跑"), None
-            task = tm.create(act.raw, "opencode", session.focus)
+            h = session.harness or "opencode"
+            avail = session.node_harnesses(session.focus)
+            if avail and h not in avail:  # 兜底：会话 harness 不在当前节点 → 自动换
+                h = session.pick_harness(session.focus) or h
+                session.harness = h
+            task = tm.create(act.raw, h, session.focus)
             msg = await tm.dispatch(task)
             session.last_task = task["id"]
             return msg + "\n（免费模型节奏慢，一般 1~3 分钟；过程中会有 ⏳ 推送，期间说话=排队追加意见）", task["id"]

@@ -20,6 +20,7 @@ class SessionManager:
         """online_nodes: () -> dict[node_id, info]（在线节点快照，用于校验/提示）"""
         self.online_nodes = online_nodes
         self.focus: str | None = None
+        self.harness: str | None = None  # 会话当前 harness（use 自动挑，harness 命令可切）
         self.last_task: str | None = None
         self.followups: list[str] = []
         self._aliases = dict(DEFAULT_ALIASES)
@@ -30,7 +31,8 @@ class SessionManager:
 
     def resolve(self, name: str) -> tuple[str | None, str]:
         """节点id直通（在线即认）→ 别名表兜底；返回 (node_id, 提示)。"""
-        online = list(self.online_nodes())
+        snap = self.online_nodes() or {}
+        online = list(snap.keys()) if isinstance(snap, dict) else list(snap)  # 兼容两种形态
         raw = name.strip().lstrip("@")
         nid = raw if raw in online else None
         if nid is None:
@@ -40,6 +42,24 @@ class SessionManager:
         if nid is None:
             return None, f"不认识「{name}」。在线：{', '.join(online) if online else '（无）'}"
         return nid, ""
+
+    def _node_info(self, nid: str) -> dict:
+        """online_nodes() 兼容 list[str] 与 dict[nid, info] 两种回调形态。"""
+        snap = self.online_nodes() or {}
+        if isinstance(snap, dict):
+            return snap.get(nid) or {}
+        return {}  # list 形态只报在线性，无 harness 信息
+
+    def pick_harness(self, nid: str) -> str | None:
+        """节点在线 harness 里挑默认（echo 不算真 harness；稳定优先序 dsh>opencode>codex）"""
+        hs = [h for h in (self._node_info(nid).get("harnesses") or []) if h != "echo"]
+        for pref in ("dsh", "opencode", "codex"):
+            if pref in hs:
+                return pref
+        return hs[0] if hs else None
+
+    def node_harnesses(self, nid: str) -> list[str]:
+        return [h for h in (self._node_info(nid).get("harnesses") or []) if h != "echo"]
 
     def switch(self, name: str) -> str:
         nid, err = self.resolve(name)

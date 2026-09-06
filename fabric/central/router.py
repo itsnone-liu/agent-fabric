@@ -26,6 +26,10 @@ def parse_command(text: str) -> Action:
     if low in ("status", "状态"):
         a.kind = "status"
         return a
+    if low.startswith("harness ") or low.startswith("切harness "):
+        a.kind = "harness"
+        a.harness = s.split(None, 1)[1].strip().lower()
+        return a
     if low.startswith("use ") or low.startswith("用 ") or low.startswith("切换 ") or low.startswith("切到 "):
         rest = s.split(None, 1)[1].strip() if len(s.split(None, 1)) > 1 else ""
         head = rest.split()[0] if rest.split() else ""
@@ -36,7 +40,12 @@ def parse_command(text: str) -> Action:
         is_host = head in hosts or head.startswith("node-")
         if not low.startswith("用 ") or is_host:
             a.kind = "use"
-            a.node = rest
+            toks = rest.split()
+            # use 汤圆 codex —— 末词是 harness 时一并解析（harness 字段 default "echo" 无意义）
+            if len(toks) > 1 and toks[-1].lower() in KNOWN_HARNESSES and toks[-1].lower() != "echo":
+                a.node, a.harness = " ".join(toks[:-1]), toks[-1].lower()
+            else:
+                a.node = rest
             return a
     if s.startswith("@") and len(s.split()) == 1:  # 裸 @节点 = 切换会话
         a.kind = "use"
