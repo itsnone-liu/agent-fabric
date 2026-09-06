@@ -31,18 +31,27 @@ def _timeout() -> int:
 def _compose_prompt(goal: str, ctx: RunContext) -> str:
     """goal + 中央 context_package（记忆→任务链路，PLAN §12）。
 
-    中央包形如 {"identity":..., "experience":[{kind,content,...}], ...}（V0 键名）；
-    缺省/异常时静默退化为裸 goal，记忆组装问题不应让任务跑不起来。
+    V0.6 包形如 {"identity", "task":{...,"parent":{...}}, "project":[...],
+    "experience":[...], "skill":[...]}；缺省/异常时静默退化为裸 goal。
     """
     pkg = getattr(ctx, "context_package", None)
     if not isinstance(pkg, dict):
         return goal
-    mems = pkg.get("experience") or pkg.get("memories") or []
-    if not mems:
+    blocks: list[str] = []
+
+    parent = (pkg.get("task") or {}).get("parent") if isinstance(pkg.get("task"), dict) else None
+    if parent:
+        blocks.append(f"[上一轮任务 {parent.get('task_id')}] {str(parent.get('memory', ''))[:400]}")
+
+    for tier, label in (("project", "项目知识"), ("experience", "历史经验"),
+                        ("skill", "可用技能")):
+        items = [str(m.get("content", ""))[:300] for m in (pkg.get(tier) or [])][:6]
+        if items:
+            blocks.append(f"[{label}]\n" + "\n".join(f"- {t}" for t in items if t))
+
+    if not blocks:
         return goal
-    lines = [f"[{m.get('kind', 'note')}] {str(m.get('content', ''))[:300]}" for m in mems[:10]]
-    return ("<context>\n相关记忆（来自中央记忆库，供参考）：\n"
-            + "\n".join(lines) + "\n</context>\n\n" + goal)
+    return "<context>\n" + "\n".join(blocks) + "\n</context>\n\n" + goal
 
 
 class OpenCodeAdapter(HarnessAdapter):

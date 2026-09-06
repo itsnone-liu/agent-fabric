@@ -3,10 +3,35 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sqlite3
 import threading
 import time
 import uuid
+
+_CJK = re.compile(r"[\u4e00-\u9fff]")
+_LATIN = re.compile(r"[a-zA-Z0-9][a-zA-Z0-9_\-\.]*")
+
+
+def _tokenize(text: str) -> set[str]:
+    """CJK bigram + 拉丁词（小写）。中文按相邻双字切，英文/数字连串成词。"""
+    text = text or ""
+    toks = {m.group(0).lower() for m in _LATIN.finditer(text) if len(m.group(0)) >= 2}
+    runs = []
+    cur = ""
+    for ch in text:
+        if _CJK.match(ch):
+            cur += ch
+        else:
+            if cur:
+                runs.append(cur)
+                cur = ""
+    if cur:
+        runs.append(cur)
+    for run in runs:
+        for i in range(len(run) - 1):
+            toks.add(run[i:i + 2])
+    return toks
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS tasks(
@@ -127,16 +152,46 @@ class Store:
         return {"id": mid, "candidate": cid, "status": "promoted"}
 
     # ---- memories（已确认记忆；V0 关键词检索，PG+pgvector 后换向量+BM25 融合）----
+
+    def add_memory(self, kind: str, scope: str, content: str, importance: int = 1,
+                   project: str = "*", source_task: str | None = None,
+                   confidence: float = 0.5) -> str:
+        """直接入库（task 自动记忆 / 人工注入走这里；节点回流走 candidate→review）。"""
+        mid = "M-" + uuid.uuid4().hex[:10]
+        with self._lock:
+            self.db.execute("INSERT INTO memories(id,kind,scope,project,content,keywords,importance,confidence,source_task,created_at,updated_at) "
+                            "VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                            (mid, kind, scope, project, (content or "")[:4000], "", importance,
+                             confidence, source_task, time.time(), time.time()))
+            self.db.commit()
+        return mid
+
+    def get_memories_by_task(self, task_id: str) -> list[dict]:
+        rows = self.db.execute("SELECT * FROM memories WHERE source_task=? ORDER BY updated_at DESC",
+                               (task_id,)).fetchall()
+        return [dict(r) for r in rows]
+
     def search_memories(self, query: str, k: int = 5) -> list[dict]:
-        terms = [w for w in set((query or "").lower().split()) if len(w) >= 2]
+        """V0.6：CJK bigram + 拉丁词 混合分词的确定性检索（零 token、零依赖）。
+
+        中文无空格，按空格分词会把整句变一个 token 导致全脱靶（2026-09-06 实测）；
+        换成：拉丁/数字词 + 中文相邻双字gram，集合交集计分 + importance 加权。
+        V1 迁 PG+pgvector 后换 向量+BM25 融合。
+        """
+        qtoks = _tokenize(query)
+        if not qtoks:
+            return []
         rows = self.db.execute("SELECT * FROM memories ORDER BY importance DESC, updated_at DESC LIMIT 500").fetchall()
         scored = []
         for r in rows:
-            content = (r["content"] or "").lower()
-            score = sum(1 for t in terms if t in content) * 2
-            if score == 0:
+            mtoks = _tokenize(r["content"] or "")
+            if not mtoks:
                 continue
-            scored.append((score + (r["importance"] or 1), dict(r)))
+            hit = qtoks & mtoks
+            if not hit:
+                continue
+            score = len(hit) * 2 + (r["importance"] or 1)
+            scored.append((score, dict(r)))
         scored.sort(key=lambda x: -x[0])
         out = []
         for _, m in scored[:k]:

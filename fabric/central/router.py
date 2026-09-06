@@ -26,6 +26,12 @@ def parse_command(text: str) -> Action:
     if low in ("status", "状态"):
         a.kind = "status"
         return a
+    if low.startswith("memory add ") or low.startswith("记忆添加 "):
+        a.kind = "memory_add"
+        parts = s.split(None, 3)  # memory add <kind> <text...>
+        a.harness = parts[2].lower() if len(parts) > 3 else ""   # 复用字段存 kind
+        a.goal = parts[3] if len(parts) > 3 else ""
+        return a
     if low.startswith("memory search ") or low.startswith("记忆搜索 "):
         a.kind = "memory_search"
         a.goal = s.split(None, 2)[2] if len(s.split(None, 2)) > 2 else ""
@@ -78,5 +84,6 @@ def help_text() -> str:
         "  status                         节点与任务状态\n"
         "  cancel <任务ID>                取消任务\n"
         "  memory / memory search <关键词>\n"
+        "  memory add <project|skill|fact|lesson|decision> <内容>   人工注入中央记忆（即审即入）\n"
         "（自然语言入口 V1 接入；V0 先用命令）"
     )

@@ -72,7 +72,8 @@ class TaskManager:
         ctx_pkg = None
         if self.memory is not None:
             try:
-                ctx_pkg = self.memory.build_context_package(task["goal"], task_id=task["id"])
+                ctx_pkg = self.memory.build_context_package(
+                    task["goal"], task_id=task["id"], parent_id=task.get("parent_task"))
             except Exception as e:  # 记忆组装失败不阻塞任务
                 ctx_pkg = {"warning": f"context package build failed: {e!r}"}
 
@@ -113,6 +114,11 @@ class TaskManager:
                 task["result"]["canceled"] = True
                 task["result"]["output"] = "（已取消）\n" + str(task["result"].get("output", ""))[:500]
             self._set(task, "done" if ok else "failed")
+            if self.memory is not None:
+                try:
+                    self.memory.on_task_result(task)  # task级记忆自动入库（零审核）
+                except Exception:
+                    pass
             await self.hub.broadcast(self._fmt_result(task))
         elif t == P.T_TASK_FAILED:
             task["result"] = {"ok": False, "output": pl.get("error", "")}

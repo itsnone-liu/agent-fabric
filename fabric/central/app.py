@@ -103,6 +103,15 @@ def create_app(db_path: str | None = None) -> FastAPI:
             res = memory.search(act.goal, k=5)
             lines = [f"- [{m['kind']}] {m['content'][:60]}" for m in res]
             return "检索结果：\n" + ("\n".join(lines) if lines else "（无命中）"), None
+        if act.kind == "memory_add":
+            from .memory import MANUAL_KINDS
+            kind, content = (act.harness or "").lower(), act.goal.strip()
+            if kind not in MANUAL_KINDS:
+                return f"kind 必须是 {'/'.join(sorted(MANUAL_KINDS))}，例：memory add project 工作区约定…", None
+            if not content:
+                return "内容为空，例：memory add project 所有脚本放 scripts/ 目录", None
+            mid = memory.add_manual(kind, content)
+            return f"✅ 已入库 [{kind}] {mid}: {content[:80]}", None
         return help_text(), None
 
     def _fmt_status() -> str:

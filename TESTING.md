@@ -53,3 +53,13 @@
 ### 部署教训（重要）
 麦片 venv 是 pip 装进 site-packages 的副本，`/opt/agent-fabric/fabric/` 源码树是"装饰品"——rsync 源码树不生效。正确姿势：同步到
 `/opt/agent-fabric/.venv/lib/python3.10/site-packages/fabric/`。本机无此问题（fabric-node-local 用源码树 cwd 直跑）。
+
+## 三级记忆（V0.6）—— 2026-09-06 第三轮
+
+- 层级：task（任务完成自动入库，零审核）/ project、skill、fact、lesson 等（`memory add <kind> <内容>` 人工即审即入，飞书可直接说）/ experience（节点候选→review 原有）
+- 检索：**CJK bigram + 拉丁词混合分词**（store._tokenize）——修复中文无空格整句脱靶问题；确定性零token
+- 组包：build_context_package 按层预算截断（task 400/project 800/experience 600/skill 600 字符），resume 链父任务记忆整条确定性带入
+- 注入：adapter 渲染 [上一轮任务]/[项目知识]/[历史经验]/[可用技能] 分块
+- 测试：17/17（新增 6 项：自动捕获/预算截断/父记忆/三tier渲染/say注入E2E/中文检索）
+- 真机：注入 project 运维约定 → 中文 goal → mimo 回答"systemctl status fabric-node，引用[项目知识]" ✅
+- 模型稳定性观察：nemotron-3.5-lightning-free 两次挂死(上游流空闲,480s行超时兜底)；mimo-v2.5-free 全天稳定——交互任务建议路由 mapian/mimo
