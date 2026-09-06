@@ -131,7 +131,9 @@ def parse_command(text: str) -> Action:
         return a
     if low.startswith("cancel ") or low.startswith("取消 "):
         a.kind = "cancel"
-        a.task_id = s.split(None, 1)[1].strip()
+        parts = s.split(None, 2)
+        a.task_id = parts[1].strip() if len(parts) > 1 else ""
+        a.goal = parts[2].strip() if len(parts) > 2 else ""  # 复用 goal 存中断原因
         return a
     if low.startswith("resume ") or low.startswith("续跑 "):
         a.kind = "resume"

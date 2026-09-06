@@ -49,6 +49,8 @@ class TaskManager:
         goal = (f"继续任务 {prev_id}（原目标：{prev['goal'][:200]}）。\n"
                 f"[前情提要·上一轮输出尾部]\n{tail}\n"
                 "[续跑说明] 上一轮工作区文件已恢复到本节点，请核验后在此基础上继续完成原目标，不要从零重做。")
+        if prev.get("cancel_reason"):  # V2a：中断原因注入——agent 知道为什么被打断
+            goal += f"\n[用户中断原因] {str(prev['cancel_reason'])[:300]}\n（上次因此被中断，务必调整）"
         if extra_goal:
             goal += f"\n[追加指示] {extra_goal}"
         task = {
@@ -169,7 +171,9 @@ class TaskManager:
         msg = await self.dispatch(task)
         return task, msg
 
-    async def cancel(self, task_id: str) -> str:
+    async def cancel(self, task_id: str, reason: str = "") -> str:
+        """V2a：cancel 可带原因——kill 照旧（急中断），原因存 task 供 resume 注入
+        （"为什么被打断"在续跑时 agent 才知道，避免再犯）。"""
         task = self.store.get_task(task_id)
         if task is None:
             return f"任务 {task_id} 不存在"
@@ -179,12 +183,15 @@ class TaskManager:
         if ns and ns.status == "online":
             try:
                 await ns.ws.send_json(P.make(P.T_TASK_CANCEL,
-                    {"reason": "user", "run_id": task.get("last_run")},
+                    {"reason": reason or "user", "run_id": task.get("last_run")},
                     task_id=task_id, node_id=ns.node_id))
             except Exception:
                 pass
+        if reason:
+            task["cancel_reason"] = reason[:500]
+            self.store.save_task(task)
         self._set(task, "canceling")
-        return f"已发送取消请求：{task_id}"
+        return f"已发送取消请求：{task_id}" + ("（原因已记录，resume 时注入）" if reason else "")
 
     def _set(self, task: dict, status: str):
         task["status"] = status

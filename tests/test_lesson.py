@@ -141,3 +141,30 @@ def test_task_run_lifecycle_and_retry():
     assert t2 and "R-" in sent[-1]["payload"].get("run_id", "")
     assert sent[-1]["payload"]["run_id"] != rid
     assert len(st.list_runs(task["id"])) == 2
+
+
+def test_send_message_and_cancel_reason():
+    """V2a：运行中插话走 T_TASK_MESSAGE；cancel 带原因存 task、resume 注入。"""
+    from fabric.central.tasks import TaskManager, P
+    from fabric.central.store import Store
+    from fabric.central.registry import NodeRegistry
+    import tempfile, os, asyncio
+
+    sent = []
+    class _WS:
+        async def send_json(self, env): sent.append(env)
+    st = Store(os.path.join(tempfile.mkdtemp(), "cm.db"))
+    reg = NodeRegistry()
+    tm = TaskManager(st, reg, hub=None)
+    reg.register("node-a", {"harnesses": ["opencode"]}, _WS())
+
+    task = tm.create("长任务", "opencode", "node-a", internal=True)
+    asyncio.run(tm.dispatch(task))
+    r = asyncio.run(tm.send_message(task["id"], "方向错了，改用方案B"))
+    assert r == "已插话"
+    assert sent[-1]["type"] == P.T_TASK_MESSAGE and "方案B" in sent[-1]["payload"]["text"]
+
+    r2 = asyncio.run(tm.cancel(task["id"], reason="方案A有风险"))
+    assert "原因已记录" in r2
+    back = st.get_task(task["id"])
+    assert back.get("cancel_reason") == "方案A有风险"

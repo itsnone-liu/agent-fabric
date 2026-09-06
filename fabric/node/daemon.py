@@ -11,6 +11,7 @@ import json
 import os
 import platform
 import socket
+import time
 import sys
 import time
 from pathlib import Path
@@ -132,7 +133,19 @@ class FabricNode:
                     except Exception:
                         pass
             elif t == P.T_TASK_MESSAGE:
-                pass  # V1：转发给运行中 harness 会话
+                # V2a 收件箱注入：任务中插话追加到工作区 inbox.md——agent 按提示
+                # 定期查看（无长连接、无协议状态机；followup 续跑仍是兜底）
+                try:
+                    msg = (env.get("payload") or {}).get("text") or ""
+                    tid = env.get("task_id") or ""
+                    if msg:
+                        box = self.workspace / ".fabric"
+                        box.mkdir(parents=True, exist_ok=True)
+                        ts = time.strftime("%H:%M:%S")
+                        with open(box / "inbox.md", "a", encoding="utf-8") as f:
+                            f.write(f"- [{ts}]（{tid} 运行中用户插话）{msg}\n")
+                except Exception as e:
+                    print(f"[fabric-node] inbox 写入失败: {e!r}", flush=True)
             elif t == P.T_NODE_CONFIGURE:
                 pass  # V1：热更新节点配置
 

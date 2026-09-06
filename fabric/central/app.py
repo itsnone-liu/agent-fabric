@@ -190,8 +190,14 @@ def create_app(db_path: str | None = None) -> FastAPI:
             last = tm.store.list_tasks(1)
             if last and last[0]["status"] not in ("done", "failed", "canceled"):  # 非终态=忙
                 session.followups.append(act.raw)
+                inbox_hint = ""
+                try:  # V2a 收件箱注入：运行中即时可见（节点写 inbox.md），完成后续跑兜底
+                    if await tm.send_message(last[0]["id"], act.raw):
+                        inbox_hint = "（已即时插入运行中任务，agent 会尽快看到）"
+                except Exception:
+                    pass
                 return (f"📥 已排队（第 {len(session.followups)} 条追加意见），"
-                        f"{last[0]['id']} 完成后自动续跑"), None
+                        f"{last[0]['id']} 完成后自动续跑{inbox_hint}"), None
             h = session.harness or "opencode"
             avail = session.node_harnesses(session.focus)
             if avail and h not in avail:  # 兜底：会话 harness 不在当前节点 → 自动换
@@ -207,7 +213,7 @@ def create_app(db_path: str | None = None) -> FastAPI:
                                        model=act.model or None)
             return msg, (task["id"] if task else None)
         if act.kind == "cancel":
-            return await tm.cancel(act.task_id or ""), None
+            return await tm.cancel(act.task_id or "", reason=act.goal or ""), None
         if act.kind == "resume":
             task, msg = await tm.resume(act.task_id or "", node_id=act.node,
                                         harness=None if act.harness == "echo" else act.harness,
