@@ -35,7 +35,21 @@ class FabricNode:
         self.node_id = node_id
         self.token = token
         self.url = url.rstrip("/")
-        self.adapters = adapters or {"echo": EchoAdapter(), "opencode": OpenCodeAdapter()}
+        # 按机器可用性自动发现 harness：显式传入优先，否则探测 dsh/codex/opencode
+        if adapters:
+            self.adapters = adapters
+        else:
+            from .adapters.dsh import DshAdapter
+            from .adapters.codex import CodexAdapter
+            import shutil as _sh
+            found: dict = {"echo": EchoAdapter()}
+            if _sh.which("dsh") or os.getenv("AF_DSH_BIN"):
+                found["dsh"] = DshAdapter()
+            if _sh.which("codex") or os.getenv("AF_CODEX_BIN"):
+                found["codex"] = CodexAdapter()
+            if _sh.which("opencode") or os.getenv("AF_OPENCODE_BIN"):
+                found["opencode"] = OpenCodeAdapter()
+            self.adapters = found
         self.workspace = Path(workspace or os.getenv("AF_WORKSPACE") or os.getcwd()).resolve()
         self.workspace.mkdir(parents=True, exist_ok=True)
         self.allow_shell = allow_shell

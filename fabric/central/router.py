@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-KNOWN_HARNESSES = {"echo", "opencode", "dsh", "hermes"}
+KNOWN_HARNESSES = {"echo", "opencode", "dsh", "codex", "hermes"}
 
 
 @dataclass

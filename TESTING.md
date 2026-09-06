@@ -141,3 +141,14 @@
 - 首跑实况（2026-09-06 19:30 @mapian mimo）：体检结论=21% 记忆零命中+daemon 两个 V1 遗留；建议=①治理零命中记忆②补 harness 转发/热更新③闭环执行路径；风险=自审计建议质量受免费模型推理上限约束（系统自知）
 - 首跑即自我提醒："建议必须闭环执行，否则只收集不落地"（自动入库）
 - 测试 46/46
+
+## V0.12.1：汤圆节点上线（双 harness）—— 2026-09-06 第十三轮
+
+- 汤圆 = 199.68.217.229（雨云，Ubuntu 22.04，2C/3.8G，OpenClaw 共存不碰）
+- 部署：npm 全局 @deepseek-ai/dsh 0.1.2-rc.1 + @openai/codex 0.153.4；fabric 走 site-packages 直装（mapian 模式——pip 打包被本地 stale build/egg-info 污染，直装绕开）
+- 双 harness：DshAdapter（dsh --profile headless 单发；模型=DSH_HOME/settings.yaml agent-default-model→dashscope/deepseek-v4-flash-0731，凭据 .credentials.yaml）+ CodexAdapter（codex exec --skip-git-repo-check；ChatGPT 登录态 auth.json+config.toml 复制，workspace trusted）
+- daemon harness 自动发现：which 探测 dsh/codex/opencode，显式传参优先（测试 cluster 不受影响）
+- 配置隔离纪律：只带走 settings+credentials+skills；feishu/（小九桥）绝不复制——双桥会冲突；sessions/evolve-workspace（本机会话与记忆）不带
+- router KNOWN_HARNESSES 补 codex（此前 codex 命令 fallthrough 到 echo）
+- 真机验证：双 probe done；双真任务 done（today.txt/codex.txt 均落盘）；**双 harness LESSON 同库回流**（[dsh]date+%Y-%m-%d、[codex]printf 避免换行）——跨 harness 经验共享成事实
+- 测试 46/46

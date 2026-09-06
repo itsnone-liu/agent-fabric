@@ -19,9 +19,9 @@
               ┌──────────────────┼──────────────────┐
               ▼                  ▼                  ▼
         ┌──────────┐       ┌──────────┐       ┌──────────┐
-        │ mapian   │       │ test-node│       │ (实验节点) │
-        │ 麦片     │       │ 米线=本机 │       │  待接入    │
-        │ mimo-free│       │ nemotron │       └──────────┘
+        │ mapian   │       │ test-node│       │ tangyuan  │
+        │ 麦片     │       │ 米线=本机 │       │ 汤圆=实验  │
+        │ mimo-free│       │ nemotron │       │ dsh+codex │
         └──────────┘       └──────────┘
         每节点: fabric-node daemon + opencode CLI（免费模型）
 ```
@@ -123,6 +123,7 @@ build_context_package    去重合并/流水限额/零命中降权
 |---|---|---|
 | 本机(米线) | central + fabric-node-local | 代码在 /root/dsh-ws/agent-fabric |
 | mapian(麦片) | fabric-node | **pip 装在 site-packages**，rsync 必须打 `.venv/lib/python3.10/site-packages/fabric/` |
+| tangyuan(汤圆) | fabric-node（dsh+codex 双 harness） | 同 mapian 直装模式；DSH_HOME=/opt/agent-fabric/dsh-home（独立配置，绝不含 feishu 桥）；codex 登录态 ~/.codex |
 | 飞书 | 小八（AF_FEISHU_ENABLED=1） | 小九 dsh 桥不许动 |
 
 ## 8. 版本里程碑
