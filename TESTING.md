@@ -163,3 +163,12 @@
 - 坑③：蒸馏 internal 任务派 focus 节点但硬编码 opencode——汤圆无 opencode 全失败 → node=None 跨节点自挑（T-15794f@test-node 蒸馏成功验证）
 - 真机：model gpt-5.6-luna → codex 任务 luna-ok 落盘 done
 - 测试 47/47（新增 model 链路 payload 单测）
+
+## V1.1：State/Memory 分离 + 结晶收紧 + 模型档案 —— 2026-09-06 第十五轮
+
+（合并 GPT 建议与自审报告，三件套一次落地）
+- ①auto_crystallize 收紧：素材须来自 ≥2 不同任务（单任务经验不配变 skill；判重先行——已有同主题技能时跨不跨任务都不结）
+- ②State/Memory 分离：on_task_result 停写 kind=task 记忆；resume 父记忆直读 tasks 表（pkg.task.parent = goal+尾部400，不再走 memories 复制）；dream ①改为一次性清空 kind=task 残留（首跑清 30 条）③零命中降权对象 task→experience
+- ③节点上报 model_profiles（dsh=settings.yaml agent-default-model；codex=config.toml model 行；opencode=AF_OPENCODE_MODEL；pyyaml 入依赖）——central 零 key：只报名不报凭据；model 命令查询显示档案
+- 真机：tangyuan 档案 dsh=dashscope/deepseek-v4-flash-0731;codex=gpt-5.6-luna；零命中 21%→17%（task 流水 30 条清出，剩余为真经验/技能）
+- 测试 48/48（dream 清空语义、parent 读 tasks 表、跨任务结晶门槛各更新）
