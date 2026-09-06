@@ -150,7 +150,7 @@ class Store:
                              row["source_task"], time.time(), time.time()))
             self.db.execute("UPDATE memory_candidates SET status='promoted' WHERE id=?", (cid,))
             self.db.commit()
-        return {"id": mid, "candidate": cid, "status": "promoted"}
+        return {"id": mid, "candidate": cid, "status": "promoted", "content": row["content"]}
 
     # ---- memories（已确认记忆；V0.7 检索=BM25×向量融合，见 memory.py）----
 

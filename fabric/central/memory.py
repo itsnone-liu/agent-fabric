@@ -346,6 +346,9 @@ class MemoryManager:
             except Exception:
                 pass  # 判重失败不阻塞——宁可多结一次
         self._last_auto = now
+        # seed 为空（review 未带内容等）时用 top 素材兜底命名/判重
+        if not seed.strip():
+            seed = str(cand[0].get("content") or "")[:200]
         topic = seed.strip()[:40] or "自动结晶"
         res = await self.crystallize(topic, tm=tm, node=node, min_sources=min_sources)
         out = {"triggered": bool(res.get("ok")), "topic": topic}
