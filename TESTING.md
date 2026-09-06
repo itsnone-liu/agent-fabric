@@ -152,3 +152,14 @@
 - router KNOWN_HARNESSES 补 codex（此前 codex 命令 fallthrough 到 echo）
 - 真机验证：双 probe done；双真任务 done（today.txt/codex.txt 均落盘）；**双 harness LESSON 同库回流**（[dsh]date+%Y-%m-%d、[codex]printf 避免换行）——跨 harness 经验共享成事实
 - 测试 46/46
+
+## V0.12.2：会话 model 指令 + 汤圆 codex 默认 luna —— 2026-09-06 第十四轮
+
+- 用户要求：codex 默认 gpt-5.6-luna + harness 切模型指令
+- 链路：model <名> → session.model → tm.create(model=) → TASK_START payload.model → daemon RunContext.model → adapter（codex -m / opencode --model / dsh 提示不支持由节点 settings 定）
+- model 查询显示当前 harness@node；切换即时生效；use/harness 换时不重置（adapter 不支持自动忽略）
+- 坑①：sed 前 grep -q "^model" 被 model_provider 前缀撞车 → 精确 "^model = "
+- 坑②：use 分支 harness 校验用 act.node（别名"汤圆"）查 registry 必空 → 先 resolve 再查
+- 坑③：蒸馏 internal 任务派 focus 节点但硬编码 opencode——汤圆无 opencode 全失败 → node=None 跨节点自挑（T-15794f@test-node 蒸馏成功验证）
+- 真机：model gpt-5.6-luna → codex 任务 luna-ok 落盘 done
+- 测试 47/47（新增 model 链路 payload 单测）
