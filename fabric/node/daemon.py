@@ -237,7 +237,8 @@ class FabricNode:
             except Exception:
                 pass
             await self._send(ws, P.make(P.T_TASK_RESULT,
-                                        {"task_id": tid, "ok": res.ok, "output": res.output[:20000],
+                                        {"task_id": tid, "run_id": self._current_run,
+                                         "ok": res.ok, "output": res.output[:20000],
                                          "artifacts": res.artifacts, "handoff": handoff,
                                          **({"canceled": True} if canceled else {})},
                                         task_id=tid, node_id=self.node_id))
