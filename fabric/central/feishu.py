@@ -65,12 +65,15 @@ class FeishuChannel:
                 return
             open_id = ev.sender.sender_id.open_id
             if self.allowed and open_id not in self.allowed:
-                self._reply(msg.message_id, "未授权用户（open_id 不在白名单）")
+                # open_id 按 App 隔离：把真实 id 回显给用户，管理员据此填白名单
+                print(f"[feishu] 未授权访问 from={open_id}", flush=True)
+                self._reply(msg.message_id, f"未授权用户。你的 open_id（本应用命名空间）：{open_id}\n请把它提供给管理员加入白名单。")
                 return
-            content = json.loads(msg.message.content or "{}")
+            content = json.loads(msg.content or "{}")
             text = re.sub(r"@_user_\d+", "", content.get("text", "")).strip()
             if not text:
                 return
+            print(f"[feishu] 收到消息 from={open_id} text={text[:60]!r}", flush=True)
             fut = asyncio.run_coroutine_threadsafe(self.on_text(text, open_id), self._loop)
             reply = fut.result(timeout=180)
             if reply:

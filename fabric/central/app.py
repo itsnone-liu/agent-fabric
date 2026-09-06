@@ -165,7 +165,7 @@ def create_app(db_path: str | None = None) -> FastAPI:
     if os.getenv("AF_FEISHU_ENABLED") == "1":
         try:
             from .feishu import FeishuChannel
-            ch = FeishuChannel(on_text=handle_user_text)
+            ch = FeishuChannel(on_text=lambda text, open_id: handle_user_text(text))
             if ch.enabled:
                 ch.start()
                 hub.add(ch)
