@@ -11,8 +11,9 @@ from __future__ import annotations
 
 import os
 
-DEFAULT_ALIASES = {"麦片": "mapian", "米线": "test-node", "mapian": "mapian",
-                   "test-node": "test-node", "本机": "test-node", "这台": "test-node"}
+DEFAULT_ALIASES = {"麦片": "mapian", "米线": "test-node", "汤圆": "tangyuan",
+                   "mapian": "mapian", "test-node": "test-node", "tangyuan": "tangyuan",
+                   "本机": "test-node", "这台": "test-node"}
 
 
 class SessionManager:
