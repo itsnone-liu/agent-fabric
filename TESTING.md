@@ -201,3 +201,12 @@
 - 真机：opencode 自报 semantic 精确（"故意未创建 c.py 留给下一步"进关键决定）；retry 新 run goal 注入结构化交接 ✓
 - 坑（重要）：python heredoc 把模块级函数插进类体中间 → 后半所有方法静默嵌套进上一个函数（AST 才看得出来，grep def 看不出）——插入类方法必须锚定类内相邻方法
 - 测试 52/52（新增 handoff 解析/注入 + 节点串行窗口不重叠 + run_id 透传）
+
+## 汤圆 dsh 换 glm-5.3 —— 2026-09-06 第十九轮（运维）
+
+- 模型：dsh-home/settings.yaml agent-default-model → glm-coding/glm-5.3（provider 段本机副本已带）
+- 三个 dsh 机制坑（踩全套才通）：
+  ① .credentials.yaml 顶层 key 是白名单制——GLM_API_KEY 不在名单，plugin tree 直接炸（unknown top-level key）；自定义 provider 的 apiKeyEnv 必须走**进程环境**（本机就是 launcher export，不进 credentials）
+  ② dsh 禁止项目 .env 设 DSH_HOME（启动环境 export 才合法；workspace 父目录的 .env 会被向上扫描命中）→ .env 删行，systemd unit 加 Environment=DSH_HOME=
+  ③ systemd EnvironmentFile 导出的变量 = daemon 进程 env → dsh 子进程继承 → GLM_API_KEY 写 /opt/agent-fabric/.env 即可
+- 真机：T-2a4172 done，glm.txt=glm53-ok；model_profiles 上报 dsh: glm-coding/glm-5.3；glm-5.3 主动遵循 .fabric/inbox.md 检查约定（V2a）
