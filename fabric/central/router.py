@@ -69,6 +69,17 @@ def parse_command(text: str) -> Action:
         a.kind = "memory_forget"
         a.goal = s.split(None, 2)[2] if len(s.split(None, 2)) > 2 else ""
         return a
+    if low.startswith("retry ") or low.startswith("重跑 "):
+        a.kind = "retry"
+        toks = s.split(None, 1)[1].split()
+        a.task_id = toks[0] if toks else ""
+        rest = toks[1:]
+        for t0 in rest:  # retry T-x codex gpt-5.6-luna（harness/model 位置无关）
+            if t0.lower() in KNOWN_HARNESSES:
+                a.harness = t0.lower()
+            elif "." in t0 or "-" in t0:
+                a.model = t0
+        return a
     if low == "improve" or low == "自审":
         a.kind = "improve"
         return a

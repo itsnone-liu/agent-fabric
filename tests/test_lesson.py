@@ -104,3 +104,40 @@ def test_model_routing_to_payload():
     task = tm.create("probe", "codex", "node-a", model="gpt-5.6-luna")
     asyncio.run(tm.dispatch(task))
     assert sent and sent[0]["payload"].get("model") == "gpt-5.6-luna"
+
+
+def test_task_run_lifecycle_and_retry():
+    """V1.2：dispatch 建 run；终态落 run 行；retry 同 task 新 run（换 harness）。"""
+    from fabric.central.tasks import TaskManager
+    from fabric.central.store import Store
+    from fabric.central.registry import NodeRegistry
+    import tempfile, os, asyncio
+
+    sent = []
+    class _WS:
+        async def send_json(self, env): sent.append(env)
+    st = Store(os.path.join(tempfile.mkdtemp(), "r.db"))
+    reg = NodeRegistry()
+    tm = TaskManager(st, reg, hub=None)
+    reg.register("node-a", {"harnesses": ["opencode", "codex"]}, _WS())
+
+    task = tm.create("probe", "opencode", "node-a", internal=True)  # internal：无推送依赖
+    asyncio.run(tm.dispatch(task))
+    assert sent and sent[-1]["payload"].get("run_id", "").startswith("R-")
+    rid = sent[-1]["payload"]["run_id"]
+    runs = st.list_runs(task["id"])
+    assert len(runs) == 1 and runs[0]["status"] == "running"
+
+    # 模拟 RESULT（done）→ on_event 走完整路径（task 派生 + run 落终态）
+    from fabric.central import tasks as _tk
+    asyncio.run(tm.on_event({"type": _tk.P.T_TASK_RESULT, "task_id": task["id"],
+                             "payload": {"ok": True, "output": "完成", "run_id": rid},
+                             "node_id": "node-a"}))
+    r = st.get_run(rid)
+    assert r and r["status"] in ("done", "failed"), r
+
+    # retry 换 harness → 新 run
+    t2, msg = asyncio.run(tm.retry(task["id"], harness="codex"))
+    assert t2 and "R-" in sent[-1]["payload"].get("run_id", "")
+    assert sent[-1]["payload"]["run_id"] != rid
+    assert len(st.list_runs(task["id"])) == 2

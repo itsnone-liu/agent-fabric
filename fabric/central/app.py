@@ -201,6 +201,11 @@ def create_app(db_path: str | None = None) -> FastAPI:
             msg = await tm.dispatch(task)
             session.last_task = task["id"]
             return msg + "\n（免费模型节奏慢，一般 1~3 分钟；过程中会有 ⏳ 推送，期间说话=排队追加意见）", task["id"]
+        if act.kind == "retry":
+            task, msg = await tm.retry(act.task_id or "",
+                                       harness=None if act.harness == "echo" else act.harness,
+                                       model=act.model or None)
+            return msg, (task["id"] if task else None)
         if act.kind == "cancel":
             return await tm.cancel(act.task_id or ""), None
         if act.kind == "resume":
@@ -283,6 +288,15 @@ def create_app(db_path: str | None = None) -> FastAPI:
                      f"回复: {body}"]
             if ho.get("files"):
                 lines.append("工作区: " + ", ".join(list(ho["files"])[:8]))
+            try:  # V1.2：runs 明细（同 task 多次执行——retry 换 harness/model 的轨迹）
+                runs = tm.store.list_runs(t["id"])
+                if runs:
+                    lines.append("runs:")
+                    for r0 in runs:
+                        lines.append(f"  {r0['id']} {r0.get('status')} {r0.get('harness')}"
+                                     + (f" ({r0.get('model')})" if r0.get("model") else ""))
+            except Exception:
+                pass
             return "\n".join(lines), None
         if act.kind == "skills_list":
             rows = [m for m in memory.store.all_memories() if m.get("kind") == "skill"]

@@ -37,6 +37,9 @@ SCHEMA = """
 CREATE TABLE IF NOT EXISTS tasks(
   id TEXT PRIMARY KEY, goal TEXT, harness TEXT, node_id TEXT,
   status TEXT, result TEXT, created_at REAL, updated_at REAL);
+CREATE TABLE IF NOT EXISTS runs(
+  id TEXT PRIMARY KEY, task_id TEXT, harness TEXT, model TEXT,
+  status TEXT, result TEXT, started_at REAL, ended_at REAL);
 CREATE TABLE IF NOT EXISTS events(
   id TEXT PRIMARY KEY, ts REAL, type TEXT, node_id TEXT, task_id TEXT, payload TEXT);
 CREATE TABLE IF NOT EXISTS memory_candidates(
@@ -76,6 +79,41 @@ class Store:
                  task.get("status"), json.dumps(task.get("result"), ensure_ascii=False),
                  task.get("created_at"), task.get("updated_at"), 1 if task.get("internal") else 0))
             self.db.commit()
+
+    # ---- V1.2 Task/Run 分离：runs 访问层 ----
+    def save_run(self, run: dict):
+        with self._lock:
+            self.db.execute(
+                "INSERT OR REPLACE INTO runs(id,task_id,harness,model,status,result,started_at,ended_at) "
+                "VALUES(?,?,?,?,?,?,?,?)",
+                (run["id"], run["task_id"], run.get("harness"), run.get("model"),
+                 run.get("status"), json.dumps(run.get("result"), ensure_ascii=False) if run.get("result") else None,
+                 run.get("started_at"), run.get("ended_at")))
+            self.db.commit()
+
+    def update_run(self, run_id: str, **fields):
+        with self._lock:
+            for k, v in fields.items():
+                self.db.execute(f"UPDATE runs SET {k}=? WHERE id=?", (v, run_id))
+            self.db.commit()
+
+    def get_run(self, run_id: str) -> dict | None:
+        row = self.db.execute("SELECT * FROM runs WHERE id=?", (run_id,)).fetchone()
+        if not row:
+            return None
+        r = dict(row)
+        r["result"] = json.loads(r["result"]) if r.get("result") else None
+        return r
+
+    def list_runs(self, task_id: str) -> list[dict]:
+        rows = self.db.execute(
+            "SELECT * FROM runs WHERE task_id=? ORDER BY started_at", (task_id,)).fetchall()
+        out = []
+        for row in rows:
+            r = dict(row)
+            r["result"] = json.loads(r["result"]) if r.get("result") else None
+            out.append(r)
+        return out
 
     def get_task(self, task_id: str) -> dict | None:
         row = self.db.execute("SELECT * FROM tasks WHERE id=?", (task_id,)).fetchone()

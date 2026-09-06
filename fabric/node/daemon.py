@@ -56,6 +56,7 @@ class FabricNode:
         default_outbox = Path.home() / ".fabric-node" / f"{node_id}-outbox.db"
         self.outbox = Outbox(outbox_path or default_outbox)
         self._cancel: set[str] = set()
+        self._current_run: str | None = None
 
     # ---------- 主循环 ----------
     async def run(self):
@@ -118,6 +119,12 @@ class FabricNode:
                 asyncio.create_task(self._run_task(env, ws))
             elif t == P.T_TASK_CANCEL:
                 tid = env.get("task_id")
+                rid = (env.get("payload") or {}).get("run_id")
+                # V1.2 per-run cancel：run_id 不匹配当前执行 = 过期请求（新 run 已
+                # 开始），忽略——防旧 cancel 误杀新 run
+                if rid and self._current_run and rid != self._current_run:
+                    print(f"[fabric-node] 忽略过期 cancel：{rid} != 当前 {self._current_run}", flush=True)
+                    continue
                 self._cancel.add(tid)
                 for a in self.adapters.values():
                     try:
@@ -168,6 +175,7 @@ class FabricNode:
                 print(f"[fabric-node] outbox 入队失败: {e!r}", flush=True)
 
     async def _run_task(self, env: dict, ws):
+        self._current_run = (env.get("payload") or {}).get("run_id")
         pl = env.get("payload", {})
         tid = pl.get("task_id") or env.get("task_id")
         harness = pl.get("harness", "echo")
@@ -233,6 +241,7 @@ class FabricNode:
                                          "artifacts": res.artifacts, "handoff": handoff,
                                          **({"canceled": True} if canceled else {})},
                                         task_id=tid, node_id=self.node_id))
+            self._current_run = None
             # 任务完成后提交经验候选（PLAN §18：节点只交 candidate，入库由中央审）
             # V0.12：internal 任务（蒸馏/自审计）不回流——系统任务的经验不是业务经验
             if not (env.get("payload") or {}).get("internal"):

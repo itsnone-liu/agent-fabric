@@ -1,6 +1,7 @@
 """任务管理：创建→派发→事件回流→完成；终态幂等（断线重放 outbox 不会重复结算）。"""
 from __future__ import annotations
 
+import json
 import time
 import uuid
 
@@ -29,6 +30,7 @@ class TaskManager:
             "id": "T-" + uuid.uuid4().hex[:6],
             "goal": goal, "harness": harness, "node_id": node_id,
             "status": "pending", "result": None, "model": model,
+            "internal": bool(internal),
             "created_at": time.time(), "updated_at": time.time(),
         }
         self.store.save_task(task)
@@ -82,8 +84,15 @@ class TaskManager:
             except Exception as e:  # 记忆组装失败不阻塞任务
                 ctx_pkg = {"warning": f"context package build failed: {e!r}"}
 
+        # V1.2 Task/Run 分离：dispatch = 建 run（harness+model 对 task 的一次执行）
+        run = {"id": "R-" + uuid.uuid4().hex[:6], "task_id": task["id"],
+               "harness": task["harness"], "model": task.get("model"),
+               "status": "running", "started_at": time.time()}
+        self.store.save_run(run)
+        task["last_run"] = run["id"]
         env = P.make(P.T_TASK_START, {
-            "task_id": task["id"], "goal": task["goal"], "harness": task["harness"],
+            "task_id": task["id"], "run_id": run["id"],
+            "goal": task["goal"], "harness": task["harness"],
             "context_package": ctx_pkg,
             "internal": bool(task.get("internal")),
             "model": task.get("model"),
@@ -121,6 +130,16 @@ class TaskManager:
             if not ok and task.get("status") == "canceling":
                 task["result"]["canceled"] = True
                 task["result"]["output"] = "（已取消）\n" + str(task["result"].get("output", ""))[:500]
+            # V1.2：结果落 run 行，task 终态由 run 派生
+            rid = env.get("payload", {}).get("run_id") or task.get("last_run")
+            if rid:
+                try:
+                    self.store.update_run(rid, status="done" if ok else "failed",
+                                          ended_at=time.time(),
+                                          result=json.dumps(task.get("result"), ensure_ascii=False)
+                                          if task.get("result") else None)
+                except Exception:
+                    pass
             self._set(task, "done" if ok else "failed")
             # V1.1 State/Memory 分离：task 流水不再进 memories 表（State 留
             # tasks 表；resume 父记忆改读 tasks 表——见 memory.build_context_package）
@@ -132,6 +151,24 @@ class TaskManager:
             self._set(task, "failed")
             await self.hub.broadcast(f"❌ {tid} 失败：{str(pl.get('error', ''))[:300]}")
 
+    async def retry(self, task_id: str, harness: str | None = None,
+                    model: str | None = None) -> tuple[dict | None, str]:
+        """V1.2：失败任务重跑——同 task 新 run（可换 harness/model："换 codex 再试"）。"""
+        task = self.store.get_task(task_id)
+        if task is None:
+            return None, f"任务 {task_id} 不存在"
+        if task.get("status") not in TERMINAL:
+            return None, f"任务 {task_id} 还在跑（{task['status']}），先 cancel"
+        if harness:
+            task["harness"] = harness
+        if model:
+            task["model"] = model
+        task["status"] = "pending"
+        task["updated_at"] = time.time()
+        self.store.save_task(task)
+        msg = await self.dispatch(task)
+        return task, msg
+
     async def cancel(self, task_id: str) -> str:
         task = self.store.get_task(task_id)
         if task is None:
@@ -141,7 +178,9 @@ class TaskManager:
         ns = self.registry.nodes.get(task.get("node_id") or "")
         if ns and ns.status == "online":
             try:
-                await ns.ws.send_json(P.make(P.T_TASK_CANCEL, {"reason": "user"}, task_id=task_id, node_id=ns.node_id))
+                await ns.ws.send_json(P.make(P.T_TASK_CANCEL,
+                    {"reason": "user", "run_id": task.get("last_run")},
+                    task_id=task_id, node_id=ns.node_id))
             except Exception:
                 pass
         self._set(task, "canceling")
