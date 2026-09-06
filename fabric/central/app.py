@@ -94,7 +94,7 @@ def create_app(db_path: str | None = None) -> FastAPI:
         """自动蒸馏 + 结果通知（人可见可撤——不满意 memory forget）。"""
         try:
             focus = getattr(session, "focus", None)
-            res = await memory.auto_crystallize(seed, tm=tm, node=focus)
+            res = await memory.auto_crystallize(seed, tm=tm, node=None)  # 蒸馏无节点偏好，registry 自挑
             if res.get("triggered"):
                 import re as _re
                 draft = str(res.get("draft") or "")
@@ -226,7 +226,7 @@ def create_app(db_path: str | None = None) -> FastAPI:
             return f"✅ 已入库 [{kind}] {mid}: {content[:80]}", None
         if act.kind == "memory_crystallize":
             focus = getattr(session, "focus", None) if session else None
-            res = await memory.crystallize(act.goal, tm=tm, node=focus)
+            res = await memory.crystallize(act.goal, tm=tm, node=None)  # 同上：蒸馏任务跨节点挑
             if not res.get("ok"):
                 return "🧊 " + res.get("hint", "素材不足"), None
             how = f"{res.get('method', '拼接')}·节点免费模型" if res.get("method") == "蒸馏" else "确定性拼接"
