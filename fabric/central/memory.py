@@ -196,6 +196,10 @@ class MemoryManager:
             m["_score"] = round(float(fused[i]), 4)
             m.pop("keywords", None)
             out.append(m)
+        try:  # 命中计数（dream 衰减依据）；失败不影响检索
+            self.store.bump_memory_hits([m["id"] for m in out])
+        except Exception:
+            pass
         return out
 
     def build_context_package(self, goal: str, task_id: str | None = None,
@@ -255,14 +259,70 @@ class MemoryManager:
                                      confidence=confidence,
                                      embedding=(vec.tobytes() if vec is not None else None))
 
-    # ---- crystallize：经验→技能结晶（V0.8 一体化；确定性零token草拟，人确认）----
-    def crystallize(self, query: str, min_sources: int = 2, k: int = 10) -> dict:
-        """把检索聚类的相关经验/任务记忆草拟成一条 skill。
+    # ---- dream：定期整理（V0.10 确定性 consolidation，零 LLM）----
+    def dream(self, task_keep: int = 50, merge_cos: float = 0.93) -> dict:
+        """去水三招：task 流水限额删除；同 kind 高相似合并（计数并入）；
+        长期零命中且低权重的 task 记忆降权。返回统计。"""
+        import time as _t
+        rows = self.store.all_memories(limit=100000)
+        now = _t.time()
+        stat = {"task_trimmed": 0, "merged": 0, "demoted": 0}
+        # ① task 流水只留最近 N 条
+        tasks_sorted = sorted([m for m in rows if m["kind"] == "task"],
+                              key=lambda m: m.get("updated_at") or 0)
+        for m in tasks_sorted[:-task_keep] if len(tasks_sorted) > task_keep else []:
+            self.store.delete_memory(m["id"])
+            stat["task_trimmed"] += 1
+        # ② 同 kind 高相似合并（experience/skill/project 才值得保真；task 已限额）
+        by_kind: dict[str, list] = {}
+        for m in rows:
+            if m["kind"] in ("experience", "skill", "project") and m.get("embedding"):
+                by_kind.setdefault(m["kind"], []).append(m)
+        for kind, ms in by_kind.items():
+            dead = set()
+            for i in range(len(ms)):
+                if ms[i]["id"] in dead:
+                    continue
+                a = np.frombuffer(ms[i]["embedding"], dtype=np.float32)
+                for j in range(i + 1, len(ms)):
+                    if ms[j]["id"] in dead:
+                        continue
+                    b = np.frombuffer(ms[j]["embedding"], dtype=np.float32)
+                    if len(a) != len(b):
+                        continue
+                    if float(a @ b) >= merge_cos:  # 已归一化
+                        keep, drop = ms[i], ms[j]
+                        if (keep.get("updated_at") or 0) < (drop.get("updated_at") or 0):
+                            keep, drop = drop, keep  # 留新的
+                        merged = (f"{_clean(str(keep['content'])[:1500])}\n"
+                                  f"[合并自 {drop['id']}·重复经验]")
+                        with self.store._lock:  # 与在线写并发安全（dream 在后台线程）
+                            self.store.db.execute("DELETE FROM memories WHERE id=?", (drop["id"],))
+                            self.store.db.execute(
+                                "UPDATE memories SET content=?, hits=COALESCE(hits,0)+?, updated_at=? WHERE id=?",
+                                (merged, (drop.get("hits") or 0), now, keep["id"]))
+                            self.store.db.commit()
+                        dead.add(drop["id"])
+                        stat["merged"] += 1
+        # ③ 零命中老 task 降权（不删——可能仍是 resume 链锚点）
+        with self.store._lock:
+            for m in rows:
+                if (m["kind"] == "task" and (m.get("importance") or 1) >= 2
+                        and not m.get("hits") and now - (m.get("updated_at") or 0) > 7 * 86400):
+                    self.store.db.execute("UPDATE memories SET importance=1 WHERE id=?", (m["id"],))
+                    stat["demoted"] += 1
+            self.store.db.commit()
+        return stat
 
+    # ---- crystallize：经验→技能结晶（V0.10：节点免费模型蒸馏，失败退拼接）----
+    async def crystallize(self, query: str, tm=None, node: str | None = None,
+                          min_sources: int = 2, k: int = 10) -> dict:
+        """把检索聚类的相关经验/任务记忆结晶成 skill。
+
+        V0.10：素材先经节点免费模型蒸馏（LLM 消耗可控——走 fabric 自己的任务
+        管道，免费模型零成本），失败/超时退回确定性拼接草稿。
         规则：素材限 experience/task 两级（skill 不吃自己，避免滚雪球）；
-        相关性绝对下限 0.25 剔杂音（BM25-only 与向量模式分布不同，不做激进
-        相对阈值——误杀真实素材比混入杂音代价大，草稿本就给人过目）；
-        experience 排前（审核过的教训 > 任务流水账）；不足 min_sources 条拒绝。
+        相关性绝对下限 0.25 剔杂音；experience 排前；不足 min_sources 条拒绝。
         """
         cand = [m for m in self.search(query, k=k)
                 if m.get("kind") in ("experience", "task") and m.get("_score", 0.0) >= 0.25]
@@ -275,12 +335,57 @@ class MemoryManager:
             return {"ok": False, "n_sources": len(hits),
                     "hint": f"相关经验仅 {len(hits)} 条（需≥{min_sources}），先积累或换关键词"}
         srcs = [f"{m['id']}({m['kind']})" for m in hits]
-        lines = [f"- {_clean(str(m.get('content', '')))[:180]}" for m in hits]
-        draft = (f"【技能】{query.strip()[:60]}（{len(hits)} 条经验结晶）\n"
-                 + "\n".join(lines)
-                 + f"\n[来源] {' '.join(srcs)}")
+        material = "\n".join(f"- {_clean(str(m.get('content', '')))[:180]}" for m in hits)
+
+        distilled = None
+        if tm is not None:
+            try:
+                distilled = await self._distill_via_node(query, material, tm, node)
+            except Exception:
+                distilled = None  # 蒸馏失败不影响——退回拼接
+        if distilled:
+            draft = distilled
+            method = "蒸馏"
+        else:
+            draft = (f"【技能】{query.strip()[:60]}（{len(hits)} 条经验结晶）\n"
+                     + material + f"\n[来源] {' '.join(srcs)}")
+            method = "拼接"
         mid = self._insert("skill", "user", draft, 2, None, 0.6)
-        return {"ok": True, "skill_id": mid, "n_sources": len(hits), "draft": draft}
+        return {"ok": True, "skill_id": mid, "n_sources": len(hits),
+                "method": method, "draft": draft}
+
+    async def _distill_via_node(self, query: str, material: str, tm, node: str | None,
+                                timeout: float = 420.0) -> str | None:
+        """派蒸馏任务到节点免费模型，轮询至终态，返回蒸馏后的技能正文。
+
+        蒸馏任务本身走完整任务管道（handoff/LESSON/进度推送）——fabric 吃自己
+        的狗粮；这就是"LLM 消耗可控"的落地：免费模型、单次、超时兜底。
+        """
+        import asyncio
+        import time as _t
+        goal = (f"把以下经验素材提炼成一条可复用的技能文档。要求：\n"
+                f"1. 开头【技能】+ 一句话主题\n"
+                f"2. 适用场景（什么时候用）\n"
+                f"3. 操作步骤（编号，可执行，含关键命令/路径，合并重复项）\n"
+                f"4. 注意事项（坑）\n"
+                f"5. 最后单行 [来源] 保留素材 id\n"
+                f"只输出技能文档本身，不要额外解释。\n\n"
+                f"主题：{query.strip()[:80]}\n素材：\n{material}")
+        task = tm.create(goal, "opencode", node, internal=True)  # 静默：不推送结果/进度
+        await tm.dispatch(task)
+        t0 = _t.time()
+        first = True
+        while _t.time() - t0 < timeout:
+            await asyncio.sleep(1 if first else 3)
+            first = False
+            t = tm.store.get_task(task["id"])
+            if t and t.get("status") in ("done", "failed", "canceled"):
+                if t["status"] != "done":
+                    return None
+                from .reply_clean import extract_reply
+                body = extract_reply(str((t.get("result") or {}).get("output") or ""))
+                return body or None
+        return None
 
     # ---- capture / review（节点候选 → 审核，原有流程）----
     def ingest_candidate(self, payload: dict, source_task: str | None = None) -> str:

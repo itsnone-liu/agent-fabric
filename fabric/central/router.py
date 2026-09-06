@@ -38,6 +38,13 @@ def parse_command(text: str) -> Action:
         a.kind = "memory_crystallize"
         a.goal = s.split(None, 2)[2]
         return a
+    if low.startswith("memory forget ") or low.startswith("记忆删除 "):
+        a.kind = "memory_forget"
+        a.goal = s.split(None, 2)[2] if len(s.split(None, 2)) > 2 else ""
+        return a
+    if low == "dream" or low == "记忆整理":
+        a.kind = "dream"
+        return a
     if low.startswith("memory add ") or low.startswith("记忆添加 "):
         a.kind = "memory_add"
         parts = s.split(None, 3)  # memory add <kind> <text...>
@@ -127,8 +134,8 @@ def help_text() -> str:
         "  cancel <任务ID>                取消任务\n"
         "  memory / memory search <关键词>\n"
         "  memory add <project|skill|fact|lesson|decision> <内容>   人工注入中央记忆（即审即入）\n"
-        "  memory crystallize <主题>   经验聚类→结晶为技能（≥2条相关经验）\n"
+        "  memory crystallize <主题>   经验聚类→节点模型蒸馏→结晶为技能（≥2条相关经验）\n"
+        "  memory forget <id> / dream   删除记忆 / 整理（去水合并+流水限额）\n"
         "  candidates / review <id|all> <promote|discard>   经验候选审核（promote→experience入库）\n"
         "  tasks [N] / task <T-id> / memories [N] / skills   管理面板\n"
-        "（自然语言入口 V1 接入；V0 先用命令）"
     )

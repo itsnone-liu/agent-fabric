@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 import hmac
 import os
+import threading
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 
@@ -30,6 +31,19 @@ def create_app(db_path: str | None = None) -> FastAPI:
     session = SessionManager(online_nodes=lambda: [n["node_id"] for n in registry.snapshot()
                                                    if n.get("status") == "online"])
     tm.session = session  # RESULT 后自动续跑排队意见（V0.9 会话化）
+
+    def _dream_loop():
+        """V0.10 定期记忆整理：启动 60s 后首跑，之后每 6h 一次（确定性零 LLM）。"""
+        import time as _t
+        _t.sleep(60)
+        while True:
+            try:
+                memory.dream()
+            except Exception as e:  # 整理失败不影响主流程
+                hub.console(f"[dream] {e!r}")
+            _t.sleep(6 * 3600)
+
+    threading.Thread(target=_dream_loop, daemon=True, name="dream").start()
 
     app = FastAPI(title="Agent Fabric Central", version="0.1.0")
     app.state.store, app.state.registry, app.state.tm, app.state.memory = store, registry, tm, memory
@@ -135,11 +149,22 @@ def create_app(db_path: str | None = None) -> FastAPI:
             mid = memory.add_manual(kind, content)
             return f"✅ 已入库 [{kind}] {mid}: {content[:80]}", None
         if act.kind == "memory_crystallize":
-            res = memory.crystallize(act.goal)
+            focus = getattr(session, "focus", None) if session else None
+            res = await memory.crystallize(act.goal, tm=tm, node=focus)
             if not res.get("ok"):
                 return "🧊 " + res.get("hint", "素材不足"), None
-            return (f"🧊 已结晶技能 {res['skill_id']}（{res['n_sources']} 条经验）\n"
-                    + res["draft"][:600]), None
+            how = f"{res.get('method', '拼接')}·节点免费模型" if res.get("method") == "蒸馏" else "确定性拼接"
+            return (f"🧊 已结晶技能 {res['skill_id']}（{res['n_sources']} 条经验·{how}）\n"
+                    + res["draft"][:600]
+                    + "\n（不满意 memory forget 该 id 后换关键词重试）"), None
+        if act.kind == "dream":
+            stat = memory.dream()
+            return ("💤 dream 整理完成：task 流水清理 {} 条、相似合并 {} 组、"
+                    "零命中降权 {} 条".format(stat["task_trimmed"], stat["merged"], stat["demoted"])), None
+        if act.kind == "memory_forget":
+            ok = memory.store.delete_memory(act.goal.strip().split()[0]) if act.goal.strip() else False
+            return ("🗑️ 已删除记忆 " + act.goal.strip() if ok
+                    else "❌ 未找到该记忆 id（memories 面板可查）"), None
         if act.kind == "tasks_list":
             try:
                 n = max(1, min(int(act.harness or 10), 20))

@@ -23,7 +23,8 @@ class TaskManager:
         self._prog_last = 0.0          # 上次过程推送时间（全局节流窗）
         self._prog_buf: list[str] = []  # 窗口内关键行
 
-    def create(self, goal: str, harness: str, node_id: str | None = None) -> dict:
+    def create(self, goal: str, harness: str, node_id: str | None = None,
+               internal: bool = False) -> dict:
         task = {
             "id": "T-" + uuid.uuid4().hex[:6],
             "goal": goal, "harness": harness, "node_id": node_id,
@@ -107,7 +108,8 @@ class TaskManager:
         elif t == P.T_TASK_RUNNING:
             self._set(task, "running")
         elif t == P.T_TASK_PROGRESS:
-            await self._push_progress_throttled(task, pl)  # 精简过程推送（V0.9）
+            if not task.get("internal"):
+                await self._push_progress_throttled(task, pl)  # 精简过程推送（V0.9）
         elif t == P.T_TASK_RESULT:
             ok = bool(pl.get("ok"))
             task["result"] = {"ok": ok, "output": pl.get("output", ""), "artifacts": pl.get("artifacts", []),
@@ -123,8 +125,9 @@ class TaskManager:
                     self.memory.on_task_result(task)  # task级记忆自动入库（零审核）
                 except Exception:
                     pass
-            await self.hub.broadcast(self._fmt_result(task))
-            await self._auto_followup(task)  # 排队的追加意见 → 自动续跑（V0.9）
+            if not task.get("internal"):
+                await self.hub.broadcast(self._fmt_result(task))
+                await self._auto_followup(task)  # 排队的追加意见 → 自动续跑（V0.9）
         elif t == P.T_TASK_FAILED:
             task["result"] = {"ok": False, "output": pl.get("error", "")}
             self._set(task, "failed")

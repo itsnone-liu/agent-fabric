@@ -69,12 +69,12 @@ class Store:
     def save_task(self, task: dict):
         with self._lock:
             self.db.execute(
-                "INSERT INTO tasks(id,goal,harness,node_id,status,result,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?) "
+                "INSERT INTO tasks(id,goal,harness,node_id,status,result,created_at,updated_at,internal) VALUES(?,?,?,?,?,?,?,?,?) "
                 "ON CONFLICT(id) DO UPDATE SET goal=excluded.goal,harness=excluded.harness,node_id=excluded.node_id,"
-                "status=excluded.status,result=excluded.result,updated_at=excluded.updated_at",
+                "status=excluded.status,result=excluded.result,updated_at=excluded.updated_at,internal=excluded.internal",
                 (task["id"], task.get("goal"), task.get("harness"), task.get("node_id"),
                  task.get("status"), json.dumps(task.get("result"), ensure_ascii=False),
-                 task.get("created_at"), task.get("updated_at")))
+                 task.get("created_at"), task.get("updated_at"), 1 if task.get("internal") else 0))
             self.db.commit()
 
     def get_task(self, task_id: str) -> dict | None:
@@ -159,7 +159,12 @@ class Store:
         cols = {r[1] for r in self.db.execute("PRAGMA table_info(memories)")}
         if "embedding" not in cols:
             self.db.execute("ALTER TABLE memories ADD COLUMN embedding BLOB")
-            self.db.commit()
+        if "hits" not in cols:
+            self.db.execute("ALTER TABLE memories ADD COLUMN hits INTEGER DEFAULT 0")
+        tcols = {r[1] for r in self.db.execute("PRAGMA table_info(tasks)")}
+        if "internal" not in tcols:
+            self.db.execute("ALTER TABLE tasks ADD COLUMN internal INTEGER DEFAULT 0")
+        self.db.commit()
 
     def add_memory(self, kind: str, scope: str, content: str, importance: int = 1,
                    project: str = "*", source_task: str | None = None,
@@ -177,6 +182,26 @@ class Store:
     def set_memory_embedding(self, mid: str, blob: bytes):
         with self._lock:
             self.db.execute("UPDATE memories SET embedding=? WHERE id=?", (blob, mid))
+            self.db.commit()
+
+    def delete_memory(self, mid: str) -> bool:
+        with self._lock:
+            cur = self.db.execute("DELETE FROM memories WHERE id=?", (mid,))
+            self.db.commit()
+            return cur.rowcount > 0
+
+    def bump_memory_hits(self, ids: list[str]):
+        """检索命中计数 +1（注入即命中，同 evolve 的 injectionCount 语义）。"""
+        if not ids:
+            return
+        with self._lock:
+            self.db.executemany("UPDATE memories SET hits=COALESCE(hits,0)+1, updated_at=? WHERE id=?",
+                                [(time.time(), i) for i in ids])
+            self.db.commit()
+
+    def delete_memory(self, mid: str):
+        with self._lock:
+            self.db.execute("DELETE FROM memories WHERE id=?", (mid,))
             self.db.commit()
 
     def all_memories(self, limit: int = 2000) -> list[dict]:

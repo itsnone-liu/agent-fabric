@@ -106,3 +106,13 @@
 - 解析宽松化：`[LESSON]` 行首/行中均可（run 命令空白折叠吃换行；模型可能包 markdown）
 - 真机：画正弦波任务 → 模型自总结"matplotlib中文字体 rcParams 设置"→ 候选池 1 条高质量（对比此前 8 条流水全废）
 - 测试 38/38（echo 适配器补注册进 cluster conftest——daemon 不内建 echo，mapian 的 echo 来自其配置）
+
+## 记忆质量三件套（V0.10）—— 2026-09-06 第九轮
+
+- 用户拍板：LLM 可用于记忆质量提升，消耗可控（免费模型=零成本）
+- ① dream 确定性整理：task 流水限额 50 条；同 kind 向量 cos≥0.93 合并（计数并入）；零命中老 task 降权；启动 60s 后首跑+每 6h；写操作全部 store 锁内（后台线程与在线写并发安全）
+- ② 结晶蒸馏：crystallize 素材派 internal 任务到节点免费模型提炼（fabric 吃自己狗粮），失败/超时退确定性拼接；internal 任务不推送结果/进度、不触发 auto_followup
+- ③ memory forget <id> 命令补删除闭环；检索命中计数 hits（注入即命中，dream 衰减依据）
+- 坑：批量 replace 把 create 的 internal 参数误注入 resume 的任务字典（签名无此参）→ NameError 空响应；FakeTM 签名要跟 tm.create 同步
+- scope 列已建未启用（单项目下过滤是伪需求，第二个项目上来再开）
+- 测试 43/43
