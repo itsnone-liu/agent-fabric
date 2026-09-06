@@ -122,11 +122,8 @@ class TaskManager:
                 task["result"]["canceled"] = True
                 task["result"]["output"] = "（已取消）\n" + str(task["result"].get("output", ""))[:500]
             self._set(task, "done" if ok else "failed")
-            if self.memory is not None:
-                try:
-                    self.memory.on_task_result(task)  # task级记忆自动入库（零审核）
-                except Exception:
-                    pass
+            # V1.1 State/Memory 分离：task 流水不再进 memories 表（State 留
+            # tasks 表；resume 父记忆改读 tasks 表——见 memory.build_context_package）
             if not task.get("internal"):
                 await self.hub.broadcast(self._fmt_result(task))
                 await self._auto_followup(task)  # 排队的追加意见 → 自动续跑（V0.9）

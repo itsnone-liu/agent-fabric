@@ -26,19 +26,20 @@ def mem(tmp_path):
     return m
 
 
-def _add(mem, kind, content, vec=None, importance=1, updated=None):
-    mid = mem.store.add_memory(kind, "project", content, importance)
+def _add(mem, kind, content, vec=None, importance=1, updated=None, source_task=None):
+    mid = mem.store.add_memory(kind, "project", content, importance, source_task=source_task)
     if vec is not None:
         mem.store.set_memory_embedding(mid, np.asarray(vec, dtype=np.float32).tobytes())
     return mid
 
 
 def test_dream_trims_task_flow(mem):
+    """V1.1 State/Memory 分离：task 流水 dream 时一次性清空（State 留 tasks 表）。"""
     for i in range(55):
         _add(mem, "task", f"[ok] 流水任务{i}", updated=time.time())
     stat = mem.dream(task_keep=50)
     rows = [m for m in mem.store.all_memories(1000) if m["kind"] == "task"]
-    assert stat["task_trimmed"] == 5 and len(rows) == 50
+    assert stat["task_trimmed"] == 55 and len(rows) == 0
 
 
 def test_dream_merges_similar_experience(mem):
@@ -134,7 +135,47 @@ def test_auto_crystallize_cooldown_and_dedup(mem):
 
     _add(mem, "skill", "【技能】matplotlib 中文字体 rcParams 配置与负号处理",
         vec=(np.ones(512, dtype=np.float32) / np.sqrt(512)).tolist())
+    for t in ("T-a", "T-b"):  # V1.1：判重测试需素材跨 ≥2 任务才能走到判重
+        _add(mem, "experience", "matplotlib 绘图经验", source_task=t,
+             vec=(np.ones(512, dtype=np.float32) / np.sqrt(512)).tolist())
     m3 = MemoryManager(mem.store)
     m3.embedder = _SameVec()
     r = _a.run(m3.auto_crystallize("matplotlib 中文字体配置", tm=None))
     assert not r["triggered"] and "同主题" in r["reason"]
+
+
+def test_auto_crystallize_requires_cross_task():
+    """V1.1：素材≥3 且须来自≥2个不同任务（单任务经验不结晶）。"""
+    import tempfile, os
+    from fabric.central.memory import MemoryManager
+    from fabric.central.store import Store
+    s = Store(os.path.join(tempfile.mkdtemp(), "ct.db"))
+    m = MemoryManager(s)
+
+    class _SameVec:
+        disabled = False
+        def embed(self, t):
+            import numpy as np
+            texts = t if isinstance(t, list) else [t]
+            return [np.ones(512, dtype=np.float32) / np.sqrt(512) for _ in texts]
+    m.embedder = _SameVec()
+
+    for i in range(3):  # 3 条经验全来自同一任务
+        m.store.add_memory("experience", "project", f"经验{i} pip freeze 导出清单",
+                           2, source_task="T-same", embedding=None)
+    class _FakeTM:  # 不该走到蒸馏
+        async def create(self, *a, **k): raise AssertionError("不应触发结晶")
+        async def dispatch(self, t): raise AssertionError("不应触发结晶")
+    import asyncio as _aio
+    r = _aio.run(m.auto_crystallize("pip freeze 导出", _FakeTM()))
+    assert not r["triggered"] and "跨任务" in r["reason"], r
+
+    m.store.add_memory("experience", "project", "经验4 pip freeze 导出与版本核对",
+                       2, source_task="T-other", embedding=None)
+    import numpy as np
+    m.store.add_memory("skill", "project", "【技能】pip freeze 导出",
+                       2, source_task=None,
+                       embedding=(np.ones(512, dtype=np.float32) / np.sqrt(512)).tobytes())
+    r2 = _aio.run(m.auto_crystallize("pip freeze 导出", _FakeTM()))
+    # 跨任务关已过（否则 reason 还是"未跨任务"）→ 现在应由判重挡下（同向量 cos=1）
+    assert r2.get("reason") != "素材未跨任务验证(1个来源任务)", r2

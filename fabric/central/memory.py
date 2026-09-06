@@ -214,14 +214,20 @@ class MemoryManager:
             "project": [], "experience": [], "skill": [],
             "budget_chars": BUDGET,
         }
-        # task 层：续跑链的父任务记忆整条带入（不靠检索，确定性召回）
+        # task 层：续跑链的父任务直接读 tasks 表（V1.1 State/Memory 分离——
+        # State 在 tasks 表，不靠 memories 检索也不复制进 memories）
         if parent_id:
-            for m in self.store.get_memories_by_task(parent_id):
+            t = self.store.get_task(parent_id)
+            if t:
+                r = t.get("result") or {}
+                tail = _clean(str(r.get("output") or ""))[-400:]
                 pkg["task"]["parent"] = {
-                    "task_id": parent_id, "ok": m.get("content", "").startswith("[ok]"),
-                    "memory": m.get("content", "")[:BUDGET["task"]],
+                    "task_id": parent_id, "ok": t.get("status") == "done",
+                    "goal": str(t.get("goal", ""))[:200],
+                    "memory": f"[{'ok' if t.get('status') == 'done' else t.get('status')}] "
+                              f"{str(t.get('goal', ''))[:200]} → @{t.get('node_id')} "
+                              f"{t.get('harness')} | 尾部: {tail}"[:BUDGET["task"]],
                 }
-                break
         # 其余层级：混合检索 + 预算截断
         hits = self.search(goal, k=12)
         for tier in ("project", "experience", "skill"):
@@ -276,12 +282,15 @@ class MemoryManager:
         rows = self.store.all_memories(limit=100000)
         now = _t.time()
         stat = {"task_trimmed": 0, "merged": 0, "demoted": 0}
-        # ① task 流水只留最近 N 条
-        tasks_sorted = sorted([m for m in rows if m["kind"] == "task"],
-                              key=lambda m: m.get("updated_at") or 0)
-        for m in tasks_sorted[:-task_keep] if len(tasks_sorted) > task_keep else []:
-            self.store.delete_memory(m["id"])
-            stat["task_trimmed"] += 1
+        # ① task 流水一次性清空（V1.1 State/Memory 分离：task 不再进 memories，
+        #    State 留 tasks 表；这行同时把历史残留的 kind=task 迁移掉）
+        with self.store._lock:
+            cur = self.store.db.execute("SELECT COUNT(*) c FROM memories WHERE kind='task'")
+            n_task = cur.fetchone()["c"] if cur else 0
+            if n_task:
+                self.store.db.execute("DELETE FROM memories WHERE kind='task'")
+                self.store.db.commit()
+                stat["task_trimmed"] = n_task
         # ② 同 kind 高相似合并（experience/skill/project 才值得保真；task 已限额）
         by_kind: dict[str, list] = {}
         for m in rows:
@@ -313,10 +322,11 @@ class MemoryManager:
                             self.store.db.commit()
                         dead.add(drop["id"])
                         stat["merged"] += 1
-        # ③ 零命中老 task 降权（不删——可能仍是 resume 链锚点）
+        # ③ 零命中老经验降权（V1.1 起 task 不在 memories；experience 长期零命中=没被
+        # 检索用上，降 importance 让排序靠后——不删，留给更激进的未来策略）
         with self.store._lock:
             for m in rows:
-                if (m["kind"] == "task" and (m.get("importance") or 1) >= 2
+                if (m["kind"] == "experience" and (m.get("importance") or 1) >= 2
                         and not m.get("hits") and now - (m.get("updated_at") or 0) > 7 * 86400):
                     self.store.db.execute("UPDATE memories SET importance=1 WHERE id=?", (m["id"],))
                     stat["demoted"] += 1
@@ -354,6 +364,11 @@ class MemoryManager:
                         return {"triggered": False, "reason": f"已有同主题技能 {m['id']}"}
             except Exception:
                 pass  # 判重失败不阻塞——宁可多结一次
+        # V1.1 收紧（GPT 建议 Phase 7）：素材须来自 ≥2 个不同任务——单任务产出的
+        # 经验未跨任务复现，一次经验不配直接变 skill；多次验证才算数
+        src_tasks = {m.get("source_task") for m in cand if m.get("source_task")}
+        if len(src_tasks) < 2:
+            return {"triggered": False, "reason": f"素材未跨任务验证({len(src_tasks)}个来源任务)"}
         self._last_auto = now
         # seed 为空（review 未带内容等）时用 top 素材兜底命名/判重
         if not seed.strip():

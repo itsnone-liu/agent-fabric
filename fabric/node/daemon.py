@@ -88,6 +88,7 @@ class FabricNode:
             "os": platform.platform(),
             "python": platform.python_version(),
             "harnesses": sorted(self.adapters),
+            "model_profiles": self._model_profiles(),
             "capabilities": {"shell": self.allow_shell},
             "workspace": str(self.workspace),
         }
@@ -127,6 +128,34 @@ class FabricNode:
                 pass  # V1：转发给运行中 harness 会话
             elif t == P.T_NODE_CONFIGURE:
                 pass  # V1：热更新节点配置
+
+    def _model_profiles(self) -> dict:
+        """各 harness 当前默认模型（central 零 key：只报名字不报凭据）。"""
+        prof = {}
+        try:
+            if "dsh" in self.adapters:
+                import yaml
+                p = os.path.join(os.getenv("DSH_HOME", os.path.expanduser("~/.dsh")),
+                                 "settings.yaml")
+                if os.path.exists(p):
+                    cfg = yaml.safe_load(open(p)) or {}
+                    dm = cfg.get("agent-default-model") or {}
+                    prof["dsh"] = f"{dm.get('provider', '?')}/{dm.get('model', '?')}"
+        except Exception:
+            pass
+        try:
+            if "codex" in self.adapters:
+                home = os.path.expanduser("~/.codex/config.toml")
+                if os.path.exists(home):
+                    import re as _re
+                    m = _re.search(r"^model\s*=\s*\"([^\"]+)\"", open(home).read(), _re.M)
+                    prof["codex"] = m.group(1) if m else "config 默认"
+        except Exception:
+            pass
+        m = os.getenv("AF_OPENCODE_MODEL", "").strip()
+        if "opencode" in self.adapters:
+            prof["opencode"] = m or "opencode 配置默认"
+        return prof
 
     # ---------- 执行任务 ----------
     async def _send(self, ws, env: dict):

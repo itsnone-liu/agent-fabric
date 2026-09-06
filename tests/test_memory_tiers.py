@@ -49,12 +49,15 @@ def test_budget_truncates_long_memories(mem):
 
 
 def test_parent_memory_in_package(mem):
+    """V1.1：父记忆直读 tasks 表（State），不再经 memories kind=task 复制。"""
     task = {"id": "T-p1", "goal": "父任务目标", "harness": "opencode", "node_id": "mapian",
             "status": "done", "result": {"ok": True, "output": "父任务输出尾部"}}
-    mem.on_task_result(task)
+    mem.store.save_task(task)
     pkg = mem.build_context_package("任意新目标", task_id="T-p2", parent_id="T-p1")
     assert pkg["task"]["parent"]["task_id"] == "T-p1"
+    assert pkg["task"]["parent"]["ok"] is True
     assert "父任务目标" in pkg["task"]["parent"]["memory"]
+    assert "父任务输出尾部" in pkg["task"]["parent"]["memory"]
 
 
 def test_compose_prompt_renders_tiers():
@@ -93,4 +96,6 @@ def test_memory_add_via_say_and_inject(cluster, ):  # noqa: E999
             time.sleep(0.2)
         mems = c.get("/api/memory", params={"q": "TESTMARK"}).json()["results"]
         assert any(m["kind"] == "project" for m in mems)
-        assert any(m["kind"] == "task" and tid in (m.get("source_task") or "") for m in mems)
+        # V1.1 State/Memory 分离：task 流水不进 memories——State 落在 tasks 表可查
+        t = [x for x in c.get("/api/tasks").json()["tasks"] if x["id"] == tid][0]
+        assert t["status"] in ("done", "failed") and t["goal"].startswith("TESTMARK")

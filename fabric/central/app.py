@@ -160,10 +160,15 @@ def create_app(db_path: str | None = None) -> FastAPI:
             return msg, None
         if act.kind == "model":
             m = (act.model or "").strip()
-            if not m:  # 查询当前
-                return (f"当前模型：{session.model or '（各 harness 默认）'}"
-                        f"\nharness：{session.harness or '?'}@{session.focus or '?'}"
-                        "\n切换：model <名字>（codex 传 -m；opencode 传 --model；dsh 由节点配置定）"), None
+            if not m:  # 查询当前 + 节点模型档案
+                nid, _ = session.resolve(session.focus) if session.focus else (None, "")
+                prof = ((session.online_nodes() or {}).get(nid or "") or {}).get("model_profiles") if nid else None
+                lines = [f"当前模型：{session.model or '（各 harness 默认）'}",
+                         f"harness：{session.harness or '?'}@{session.focus or '?'}"]
+                if prof:
+                    lines.append("节点模型档案：" + "；".join(f"{k}={v}" for k, v in prof.items()))
+                lines.append("切换：model <名字>（codex 传 -m；opencode 传 --model；dsh 由节点配置定）")
+                return "\n".join(lines), None
             session.model = m
             return f"✅ 模型已切：{m}（{session.harness or '?'}@{session.focus or '?'}；adapter 不支持的会忽略）", None
         if act.kind == "harness":
