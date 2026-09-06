@@ -155,13 +155,25 @@ class TaskManager:
                       "成功", "完成", "创建", "生成", "运行", "✓", "✅", "❌")
 
     async def _push_progress_throttled(self, task: dict, pl: dict):
-        """过程精简推送：仅关键行、8s 时间窗合并（明细仍全量在 events 表）。"""
+        """过程精简推送：仅关键行、8s 时间窗合并（明细仍全量在 events 表）。
+
+        opencode 实际行格式（2026-09-06 实测）：`$ cmd`（命令）、`→ Read f`
+        （工具）、裸路径输出——英文工具名词表（Write/Bash）匹配不上 `$ pwd`，
+        必须按行形态识别。命令行（$ 开头）高价值，立即推不聚合。
+        """
         import time as _t
         line = _ansi(str(pl.get("text", ""))).strip()
         if not line or len(line) < 4:
             return
-        if not any(k in line for k in self._PROGRESS_KEYS):
+        is_cmd = line.startswith("$ ") or line.startswith("→ ")
+        if not (is_cmd or any(k in line for k in self._PROGRESS_KEYS)):
             return  # 非关键行不推（用户要过程精简）
+        if is_cmd:  # 命令/工具行即时推，不让用户在静默里等
+            self._prog_buf.append(f"{task['id']} · {line[:110]}")
+            self._prog_last = _t.time()
+            chunk, self._prog_buf = self._prog_buf[-6:], []
+            await self.hub.broadcast("⏳ 过程：\n" + "\n".join(chunk))
+            return
         self._prog_buf.append(f"{task['id']} · {line[:110]}")
         now = _t.time()
         if now - self._prog_last < 8 and len(self._prog_buf) < 6:
@@ -191,8 +203,15 @@ class TaskManager:
     def _fmt_result(task: dict) -> str:
         r = task.get("result") or {}
         output = str(r.get("output", ""))
-        tail = output[-1800:] if len(output) > 1800 else output  # 结果要完整（用户 2026-09-06）
+        # 整理成模型的完整自然回复（用户 2026-09-06）：剥过程符号、保全正文
+        # 数字/代码块；提取失败退回原始尾部——宁可多给不可丢答案。
+        from .reply_clean import extract_reply
+        body = extract_reply(output)
+        if body is None:
+            body = output[-1200:]
+        elif len(body) > 2500:
+            body = body[-2500:]
         mark = "✅" if r.get("ok") else "⚠️"
         files = list(((r.get("handoff") or {}).get("files") or {}))
         packed = f"\n📦 工作区：{', '.join(files[:10])}" + (f" 等{len(files)}个文件" if len(files) > 10 else "") if files else ""
-        return f"{mark} {task['id']} 完成（{task.get('harness')} @ {task.get('node_id')}）{packed}\n{tail}"
+        return f"{mark} {task['id']} 完成（{task.get('harness')} @ {task.get('node_id')}）{packed}\n{body}"

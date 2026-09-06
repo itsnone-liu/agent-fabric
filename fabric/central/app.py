@@ -105,7 +105,7 @@ def create_app(db_path: str | None = None) -> FastAPI:
             task = tm.create(act.raw, "opencode", session.focus)
             msg = await tm.dispatch(task)
             session.last_task = task["id"]
-            return msg, task["id"]
+            return msg + "\n（免费模型节奏慢，一般 1~3 分钟；过程中会有 ⏳ 推送，期间说话=排队追加意见）", task["id"]
         if act.kind == "cancel":
             return await tm.cancel(act.task_id or ""), None
         if act.kind == "resume":
@@ -155,9 +155,11 @@ def create_app(db_path: str | None = None) -> FastAPI:
                 return f"任务 {act.task_id} 不存在", None
             r = t.get("result") or {}
             ho = r.get("handoff") or {}
+            from .reply_clean import extract_reply
+            body = extract_reply(str(r.get("output") or "")) or (r.get("output") or r.get("error") or "")[-160:]
             lines = [f"{t['id']} {t['status']} @{t.get('node_id')} {t.get('harness')}",
                      f"目标: {(t.get('goal') or '')[:120]}",
-                     f"尾部: {(r.get('output') or r.get('error') or '')[-160:]}"]
+                     f"回复: {body}"]
             if ho.get("files"):
                 lines.append("工作区: " + ", ".join(list(ho["files"])[:8]))
             return "\n".join(lines), None
