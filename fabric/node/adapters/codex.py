@@ -48,9 +48,14 @@ class CodexAdapter(HarnessAdapter):
             return AdapterResult(True, f"codex {ver}\nauth=~/.codex（config.toml 指定 provider）")
 
         prompt = _compose_prompt(g, ctx)
-        await progress(f"$ codex exec（prompt {len(prompt)} 字）")
+        model = (getattr(ctx, "model", None) or "").strip()
+        await progress(f"$ codex exec（model={model or 'config.toml 默认'}，prompt {len(prompt)} 字）")
+        args = [binp, "exec", "--skip-git-repo-check"]
+        if model:
+            args += ["-m", model]
+        args.append(prompt)
         proc = await asyncio.create_subprocess_exec(
-            binp, "exec", "--skip-git-repo-check", prompt,
+            *args,
             cwd=ctx.workspace,
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
         self._proc = proc

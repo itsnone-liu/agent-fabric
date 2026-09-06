@@ -84,3 +84,23 @@ def test_edit_memory_rewrites_content():
     assert rows and "更正后" in rows[0]["content"]
     assert rows[0]["embedding"], "编辑后向量应重算"
     assert m.edit_memory("M-nope", "x")["ok"] is False
+
+
+def test_model_routing_to_payload():
+    """V0.12.2：会话 model → task.model → TASK_START payload → adapter ctx。"""
+    from fabric.central.tasks import TaskManager
+    from fabric.central.store import Store
+    from fabric.central.registry import NodeRegistry
+    import tempfile, os, asyncio
+
+    class _FakeWS:
+        async def send_json(self, env):
+            sent.append(env)
+    sent = []
+    st = Store(os.path.join(tempfile.mkdtemp(), "m.db"))
+    reg = NodeRegistry()
+    tm = TaskManager(st, reg, hub=None)
+    ns = reg.register("node-a", {"harnesses": ["codex"]}, _FakeWS())
+    task = tm.create("probe", "codex", "node-a", model="gpt-5.6-luna")
+    asyncio.run(tm.dispatch(task))
+    assert sent and sent[0]["payload"].get("model") == "gpt-5.6-luna"

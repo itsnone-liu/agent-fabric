@@ -24,11 +24,11 @@ class TaskManager:
         self._prog_buf: list[str] = []  # 窗口内关键行
 
     def create(self, goal: str, harness: str, node_id: str | None = None,
-               internal: bool = False) -> dict:
+               internal: bool = False, model: str | None = None) -> dict:
         task = {
             "id": "T-" + uuid.uuid4().hex[:6],
             "goal": goal, "harness": harness, "node_id": node_id,
-            "status": "pending", "result": None,
+            "status": "pending", "result": None, "model": model,
             "created_at": time.time(), "updated_at": time.time(),
         }
         self.store.save_task(task)
@@ -86,6 +86,7 @@ class TaskManager:
             "task_id": task["id"], "goal": task["goal"], "harness": task["harness"],
             "context_package": ctx_pkg,
             "internal": bool(task.get("internal")),
+            "model": task.get("model"),
             "restore_files": task.get("restore_files"),
         }, task_id=task["id"], node_id=ns.node_id)
         try:

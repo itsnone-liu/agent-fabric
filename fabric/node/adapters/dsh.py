@@ -53,6 +53,9 @@ class DshAdapter(HarnessAdapter):
             return AdapterResult(True, f"dsh {ver}\nDSH_HOME={home}\nmodel={model}")
 
         prompt = _compose_prompt(g, ctx)
+        model = (getattr(ctx, "model", None) or "").strip()
+        if model:
+            await progress(f"⚠️ dsh headless 不支持会话切模型（由节点 settings.yaml 定），忽略 model={model}")
         await progress(f"$ dsh --profile headless（prompt {len(prompt)} 字）")
         proc = await asyncio.create_subprocess_exec(
             binp, "--profile", "headless", prompt,

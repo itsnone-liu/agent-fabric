@@ -11,6 +11,7 @@ class Action:
     kind: str = "help"  # help / status / run / cancel / resume / unknown
     node: str | None = None
     harness: str = "echo"
+    model: str = ""
     goal: str = ""
     task_id: str | None = None
     raw: str = ""
@@ -25,6 +26,11 @@ def parse_command(text: str) -> Action:
         return a
     if low in ("status", "状态"):
         a.kind = "status"
+        return a
+    if low.startswith("model ") or low == "model" or low.startswith("切模型 "):
+        a.kind = "model"
+        parts = s.split(None, 1)
+        a.model = parts[1].strip() if len(parts) > 1 else ""
         return a
     if low.startswith("harness ") or low.startswith("切harness "):
         a.kind = "harness"

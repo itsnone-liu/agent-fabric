@@ -174,6 +174,7 @@ class FabricNode:
 
         try:
             ctx = RunContext(workspace=self.workspace, allow_shell=self.allow_shell,
+                             model=(env.get("payload") or {}).get("model"),
                              context_package=pl.get("context_package"))
             res = await adapter.start(goal, ctx, progress)
             canceled = tid in self._cancel

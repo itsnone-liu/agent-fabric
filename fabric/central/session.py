@@ -22,6 +22,7 @@ class SessionManager:
         self.online_nodes = online_nodes
         self.focus: str | None = None
         self.harness: str | None = None  # 会话当前 harness（use 自动挑，harness 命令可切）
+        self.model: str | None = None    # 会话当前模型覆盖（model 命令切；adapter 不支持则忽略）
         self.last_task: str | None = None
         self.followups: list[str] = []
         self._aliases = dict(DEFAULT_ALIASES)

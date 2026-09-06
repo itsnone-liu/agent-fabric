@@ -157,6 +157,14 @@ def create_app(db_path: str | None = None) -> FastAPI:
                 msg += f"\nharness：{session.harness}" + \
                        (f"（可切换：{'/'.join(avail)}，说 harness <名>）" if len(avail) > 1 else "")
             return msg, None
+        if act.kind == "model":
+            m = (act.model or "").strip()
+            if not m:  # 查询当前
+                return (f"当前模型：{session.model or '（各 harness 默认）'}"
+                        f"\nharness：{session.harness or '?'}@{session.focus or '?'}"
+                        "\n切换：model <名字>（codex 传 -m；opencode 传 --model；dsh 由节点配置定）"), None
+            session.model = m
+            return f"✅ 模型已切：{m}（{session.harness or '?'}@{session.focus or '?'}；adapter 不支持的会忽略）", None
         if act.kind == "harness":
             h = (act.harness or "").strip()
             if h not in KNOWN_HARNESSES:
@@ -183,7 +191,7 @@ def create_app(db_path: str | None = None) -> FastAPI:
             if avail and h not in avail:  # 兜底：会话 harness 不在当前节点 → 自动换
                 h = session.pick_harness(session.focus) or h
                 session.harness = h
-            task = tm.create(act.raw, h, session.focus)
+            task = tm.create(act.raw, h, session.focus, model=session.model)
             msg = await tm.dispatch(task)
             session.last_task = task["id"]
             return msg + "\n（免费模型节奏慢，一般 1~3 分钟；过程中会有 ⏳ 推送，期间说话=排队追加意见）", task["id"]

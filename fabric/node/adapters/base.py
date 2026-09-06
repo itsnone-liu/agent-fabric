@@ -24,6 +24,7 @@ class RunContext:
     allow_shell: bool = False
     env: dict = field(default_factory=dict)
     context_package: dict | None = None  # 中央记忆组装的上下文包（PLAN §12）
+    model: str | None = None  # 会话指定的模型覆盖（adapter 不支持则忽略）
 
 
 ProgressFn = Callable[[str], Awaitable[None]]

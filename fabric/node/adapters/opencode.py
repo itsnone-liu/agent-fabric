@@ -67,7 +67,7 @@ class OpenCodeAdapter(HarnessAdapter):
         oc = _bin()
         if not oc:
             return AdapterResult(False, "opencode 二进制未找到：设置 AF_OPENCODE_BIN")
-        model = os.getenv("AF_OPENCODE_MODEL", "").strip()
+        model = (getattr(ctx, "model", None) or os.getenv("AF_OPENCODE_MODEL", "")).strip()
 
         if g == "probe":
             proc = await asyncio.create_subprocess_exec(
