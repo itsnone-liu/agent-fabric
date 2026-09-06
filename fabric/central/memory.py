@@ -261,6 +261,15 @@ class MemoryManager:
 
     # ---- dream：定期整理（V0.10 确定性 consolidation，零 LLM）----
     def dream(self, task_keep: int = 50, merge_cos: float = 0.93) -> dict:
+        """整理（带一次竞态自愈重试：与在线写并发偶发 sqlite 竞态，下次 6h 也兜底）。"""
+        try:
+            return self._dream_once(task_keep, merge_cos)
+        except Exception:
+            import time as _tt
+            _tt.sleep(0.1)
+            return self._dream_once(task_keep, merge_cos)
+
+    def _dream_once(self, task_keep: int, merge_cos: float) -> dict:
         """去水三招：task 流水限额删除；同 kind 高相似合并（计数并入）；
         长期零命中且低权重的 task 记忆降权。返回统计。"""
         import time as _t
