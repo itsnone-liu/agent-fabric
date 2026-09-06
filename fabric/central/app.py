@@ -145,14 +145,15 @@ def create_app(db_path: str | None = None) -> FastAPI:
         if act.kind == "use":
             if not act.node:
                 return "用法：use <麦片|米线|节点id>（或裸 @节点）\n" + session.snapshot(), None
+            nid, _ = session.resolve(act.node)
             msg = session.switch(act.node)
-            avail = session.node_harnesses(act.node)
+            avail = session.node_harnesses(nid or act.node)
             if act.harness and act.harness != "echo":  # use 汤圆 codex 显式指定
                 session.harness = act.harness if act.harness in avail else None
                 if not session.harness:
-                    msg += f"\n⚠️ {act.node} 没有 harness {act.harness}（可用：{'/'.join(avail) or '无'}）"
+                    msg += f"\n⚠️ {nid or act.node} 没有 harness {act.harness}（可用：{'/'.join(avail) or '无'}）"
             else:
-                session.harness = session.pick_harness(act.node)
+                session.harness = session.pick_harness(nid or act.node)
             if session.harness:
                 msg += f"\nharness：{session.harness}" + \
                        (f"（可切换：{'/'.join(avail)}，说 harness <名>）" if len(avail) > 1 else "")
