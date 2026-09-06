@@ -6,6 +6,7 @@ import uuid
 
 from ..shared import protocol as P
 from .channels import ChannelHub
+from .memory import _clean as _ansi
 from .registry import NodeRegistry
 from .store import Store
 
@@ -18,6 +19,9 @@ class TaskManager:
         self.registry = registry
         self.hub = hub
         self.memory = memory  # MemoryManager，可选；用于组装 context_package
+        self.session = None            # app 装配后注入（V0.9 会话化）
+        self._prog_last = 0.0          # 上次过程推送时间（全局节流窗）
+        self._prog_buf: list[str] = []  # 窗口内关键行
 
     def create(self, goal: str, harness: str, node_id: str | None = None) -> dict:
         task = {
@@ -103,7 +107,7 @@ class TaskManager:
         elif t == P.T_TASK_RUNNING:
             self._set(task, "running")
         elif t == P.T_TASK_PROGRESS:
-            pass  # progress 明细走 events 表
+            await self._push_progress_throttled(task, pl)  # 精简过程推送（V0.9）
         elif t == P.T_TASK_RESULT:
             ok = bool(pl.get("ok"))
             task["result"] = {"ok": ok, "output": pl.get("output", ""), "artifacts": pl.get("artifacts", []),
@@ -120,6 +124,7 @@ class TaskManager:
                 except Exception:
                     pass
             await self.hub.broadcast(self._fmt_result(task))
+            await self._auto_followup(task)  # 排队的追加意见 → 自动续跑（V0.9）
         elif t == P.T_TASK_FAILED:
             task["result"] = {"ok": False, "output": pl.get("error", "")}
             self._set(task, "failed")
@@ -145,10 +150,49 @@ class TaskManager:
         task["updated_at"] = time.time()
         self.store.save_task(task)
 
+    # ---- V0.9 会话化：过程节流推送 / 结果完整化 / 自动续跑 ----
+    _PROGRESS_KEYS = ("Write", "Wrote", "Edit", "Bash", "Read", "Run", "Error", "error", "失败",
+                      "成功", "完成", "创建", "生成", "运行", "✓", "✅", "❌")
+
+    async def _push_progress_throttled(self, task: dict, pl: dict):
+        """过程精简推送：仅关键行、8s 时间窗合并（明细仍全量在 events 表）。"""
+        import time as _t
+        line = _ansi(str(pl.get("text", ""))).strip()
+        if not line or len(line) < 4:
+            return
+        if not any(k in line for k in self._PROGRESS_KEYS):
+            return  # 非关键行不推（用户要过程精简）
+        self._prog_buf.append(f"{task['id']} · {line[:110]}")
+        now = _t.time()
+        if now - self._prog_last < 8 and len(self._prog_buf) < 6:
+            return
+        self._prog_last = now
+        chunk, self._prog_buf = self._prog_buf[-6:], []
+        await self.hub.broadcast("⏳ 过程：\n" + "\n".join(chunk))
+
+    async def _auto_followup(self, task: dict):
+        """任务终态后，把会话中排队的追加意见自动续跑（resume 链）。"""
+        sess = getattr(self, "session", None)
+        if not sess or not sess.followups:
+            return
+        extra = "；".join(sess.followups)
+        sess.followups = []
+        try:
+            new_task, msg = await self.resume(task["id"], node_id=sess.focus,
+                                              harness=task.get("harness") or "opencode",
+                                              extra_goal=extra)
+            if new_task:
+                sess.last_task = new_task["id"]
+                await self.hub.broadcast(f"📋 已按你的追加意见自动续跑 → {new_task['id']}（恢复工作区+意见：{extra[:120]}）")
+        except Exception as e:
+            await self.hub.broadcast(f"⚠️ 自动续跑失败：{e!r}（可手动 resume {task['id']}）")
+
     @staticmethod
     def _fmt_result(task: dict) -> str:
         r = task.get("result") or {}
         output = str(r.get("output", ""))
-        tail = output[-600:] if len(output) > 600 else output
+        tail = output[-1800:] if len(output) > 1800 else output  # 结果要完整（用户 2026-09-06）
         mark = "✅" if r.get("ok") else "⚠️"
-        return f"{mark} {task['id']} 完成（{task.get('harness')} @ {task.get('node_id')}）\n{tail}"
+        files = list(((r.get("handoff") or {}).get("files") or {}))
+        packed = f"\n📦 工作区：{', '.join(files[:10])}" + (f" 等{len(files)}个文件" if len(files) > 10 else "") if files else ""
+        return f"{mark} {task['id']} 完成（{task.get('harness')} @ {task.get('node_id')}）{packed}\n{tail}"

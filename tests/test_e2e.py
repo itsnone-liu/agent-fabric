@@ -150,4 +150,5 @@ def test_status_and_help(node):
     port = node
     with _client(port) as c:
         assert "test-node" in c.post("/api/say", json={"text": "status"}).json()["reply"]
-        assert "run" in c.post("/api/say", json={"text": "不知道说什么"}).json()["reply"]
+        # V0.9：未知文本不再兜底 help，而是进入会话引导（选主机后即自然语言任务）
+        assert "use" in c.post("/api/say", json={"text": "不知道说什么"}).json()["reply"]

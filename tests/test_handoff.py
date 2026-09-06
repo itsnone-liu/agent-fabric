@@ -1,6 +1,7 @@
 """handoff（任务可续）测试：workspace 差分单测 + 双节点续跑 E2E。"""
 from __future__ import annotations
 
+import asyncio
 import time
 from pathlib import Path
 
@@ -75,13 +76,17 @@ class MakeFileAdapter:
 
 
 class ReadFileAdapter:
-    """假 harness：读 demo.txt，把内容回显（文件不在则失败）。"""
+    """假 harness：读 demo.txt，把内容回显（文件不在则失败）。
+
+    带 2s 延迟：给会话排队测试留出"running 中发意见"的真实窗口。
+    """
     name = "readfile"
 
     async def start(self, goal, ctx: RunContext, progress):
         p = ctx.workspace / "demo.txt"
         if not p.exists():
             return AdapterResult(False, "demo.txt 不存在（handoff 恢复失败）")
+        await asyncio.sleep(2)
         await progress("demo.txt found")
         return AdapterResult(True, p.read_text(encoding="utf-8"))
 

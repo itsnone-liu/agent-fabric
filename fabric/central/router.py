@@ -26,6 +26,14 @@ def parse_command(text: str) -> Action:
     if low in ("status", "状态"):
         a.kind = "status"
         return a
+    if low.startswith("use ") or low.startswith("用 ") or low.startswith("切换 ") or low.startswith("切到 "):
+        a.kind = "use"
+        a.node = s.split(None, 1)[1].strip() if len(s.split(None, 1)) > 1 else ""
+        return a
+    if s.startswith("@") and len(s.split()) == 1:  # 裸 @节点 = 切换会话
+        a.kind = "use"
+        a.node = s[1:]
+        return a
     if low.startswith("memory crystallize ") or low.startswith("经验结晶 "):
         a.kind = "memory_crystallize"
         a.goal = s.split(None, 2)[2]

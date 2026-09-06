@@ -26,6 +26,10 @@ def create_app(db_path: str | None = None) -> FastAPI:
     hub = ChannelHub([ConsoleChannel()])
     memory = MemoryManager(store)
     tm = TaskManager(store, registry, hub, memory=memory)
+    from .session import SessionManager
+    session = SessionManager(online_nodes=lambda: [n["node_id"] for n in registry.snapshot()
+                                                   if n.get("status") == "online"])
+    tm.session = session  # RESULT 后自动续跑排队意见（V0.9 会话化）
 
     app = FastAPI(title="Agent Fabric Central", version="0.1.0")
     app.state.store, app.state.registry, app.state.tm, app.state.memory = store, registry, tm, memory
@@ -83,7 +87,25 @@ def create_app(db_path: str | None = None) -> FastAPI:
     async def handle_user_text(text: str) -> tuple[str, str | None]:
         act: Action = parse_command(text)
         if act.kind == "status":
-            return _fmt_status(), None
+            return _fmt_status() + "\n" + session.snapshot(), None
+        if act.kind == "use":
+            if not act.node:
+                return "用法：use <麦片|米线|节点id>（或裸 @节点）\n" + session.snapshot(), None
+            return session.switch(act.node), None
+        if act.kind == "unknown":
+            # 会话式自然语言（V0.9）：选完主机后直接说话即任务
+            if not session.focus:
+                return ("👋 先选主机：use 麦片 / use 米线（或 @mapian）。"
+                        "命令玩法发 help"), None
+            last = tm.store.list_tasks(1)
+            if last and last[0]["status"] not in ("done", "failed", "canceled"):  # 非终态=忙
+                session.followups.append(act.raw)
+                return (f"📥 已排队（第 {len(session.followups)} 条追加意见），"
+                        f"{last[0]['id']} 完成后自动续跑"), None
+            task = tm.create(act.raw, "opencode", session.focus)
+            msg = await tm.dispatch(task)
+            session.last_task = task["id"]
+            return msg, task["id"]
         if act.kind == "cancel":
             return await tm.cancel(act.task_id or ""), None
         if act.kind == "resume":
