@@ -27,9 +27,17 @@ def parse_command(text: str) -> Action:
         a.kind = "status"
         return a
     if low.startswith("use ") or low.startswith("用 ") or low.startswith("切换 ") or low.startswith("切到 "):
-        a.kind = "use"
-        a.node = s.split(None, 1)[1].strip() if len(s.split(None, 1)) > 1 else ""
-        return a
+        rest = s.split(None, 1)[1].strip() if len(s.split(None, 1)) > 1 else ""
+        head = rest.split()[0] if rest.split() else ""
+        # 中文"用"前缀与自然语言"用 pip/用 python 做 x"冲突：仅当首词是
+        # 已知主机别名（或 node-xxx 形态）才视为 use，否则落回自然语言
+        from .session import DEFAULT_ALIASES
+        hosts = set(DEFAULT_ALIASES) | set(DEFAULT_ALIASES.values())
+        is_host = head in hosts or head.startswith("node-")
+        if not low.startswith("用 ") or is_host:
+            a.kind = "use"
+            a.node = rest
+            return a
     if s.startswith("@") and len(s.split()) == 1:  # 裸 @节点 = 切换会话
         a.kind = "use"
         a.node = s[1:]
