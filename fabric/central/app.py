@@ -95,11 +95,15 @@ def create_app(db_path: str | None = None) -> FastAPI:
             focus = getattr(session, "focus", None)
             res = await memory.auto_crystallize(seed, tm=tm, node=focus)
             if res.get("triggered"):
+                import re as _re
+                draft = str(res.get("draft") or "")
+                m = _re.search(r"【技能】(.+)", draft)
+                title = (m.group(1).strip() if m else res.get("topic"))  # 优先用蒸馏自拟标题
                 await hub.broadcast(
                     f"🧊 自动结晶技能 {res.get('skill_id')}（{res.get('n_sources')} 条经验"
-                    f"·{res.get('method')}）：{res.get('topic')}\n"
-                    + str(res.get("draft") or "")[:300]
-                    + "\n（不满意 memory forget 该 id）")
+                    f"·{res.get('method')}）：{title}\n"
+                    + draft[:300]
+                    + "\n（不满意 memory forget 该 id / 更正 memory edit 该 id <新内容>）")
         except Exception as e:
             hub.console(f"[auto-crystallize] {e!r}")
 
