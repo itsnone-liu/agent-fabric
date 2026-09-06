@@ -86,6 +86,11 @@ def create_app(db_path: str | None = None) -> FastAPI:
             return _fmt_status(), None
         if act.kind == "cancel":
             return await tm.cancel(act.task_id or ""), None
+        if act.kind == "resume":
+            task, msg = await tm.resume(act.task_id or "", node_id=act.node,
+                                        harness=None if act.harness == "echo" else act.harness,
+                                        extra_goal=act.goal)
+            return msg, (task["id"] if task else None)
         if act.kind == "run":
             task = tm.create(act.goal, act.harness, act.node)
             msg = await tm.dispatch(task)

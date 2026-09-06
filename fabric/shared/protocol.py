@@ -68,6 +68,9 @@ class TaskStartPayload(BaseModel):
     workspace: str | None = None
     model_profile: str | None = None
     context_package: dict | None = None
+    # 跨节点续跑：把上一轮 handoff.files 直接落盘到本节点工作区（V0.5 内联小文件；
+    # 大文件走数据面 Git/对象存储是 V1 计划，见 PLAN §6）
+    restore_files: dict[str, str] | None = None
 
 
 class TaskResultPayload(BaseModel):
@@ -75,6 +78,8 @@ class TaskResultPayload(BaseModel):
     ok: bool
     output: str = ""
     artifacts: list[str] = Field(default_factory=list)
+    # 任务可续包：本轮新增/变更的文本文件 + 输出尾部（供 resume 到任意节点续跑）
+    handoff: dict | None = None
 
 
 class MemoryCandidatePayload(BaseModel):

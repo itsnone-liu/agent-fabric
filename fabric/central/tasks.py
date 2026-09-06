@@ -29,6 +29,33 @@ class TaskManager:
         self.store.save_task(task)
         return task
 
+    async def resume(self, prev_id: str, node_id: str | None = None,
+                     harness: str | None = None, extra_goal: str = "") -> tuple[dict | None, str]:
+        """任务可续：取上一轮 handoff（文件+输出尾部），组装续跑任务派发到任意节点。"""
+        prev = self.store.get_task(prev_id)
+        if prev is None:
+            return None, f"任务 {prev_id} 不存在"
+        pr = prev.get("result") or {}
+        handoff = pr.get("handoff") or {}
+        files = handoff.get("files") or {}
+        tail = (handoff.get("tail") or pr.get("output") or "")[-500:]
+        goal = (f"继续任务 {prev_id}（原目标：{prev['goal'][:200]}）。\n"
+                f"[前情提要·上一轮输出尾部]\n{tail}\n"
+                "[续跑说明] 上一轮工作区文件已恢复到本节点，请核验后在此基础上继续完成原目标，不要从零重做。")
+        if extra_goal:
+            goal += f"\n[追加指示] {extra_goal}"
+        task = {
+            "id": "T-" + uuid.uuid4().hex[:6],
+            "goal": goal, "harness": harness or prev.get("harness", "echo"),
+            "node_id": node_id, "status": "pending", "result": None,
+            "parent_task": prev_id, "restore_files": files or None,
+            "created_at": time.time(), "updated_at": time.time(),
+        }
+        self.store.save_task(task)
+        msg = await self.dispatch(task)
+        note = f"（handoff：{len(files)} 个文件恢复）" if files else "（上一轮无 handoff 文件，仅带前情提要续跑）"
+        return task, msg + note
+
     async def dispatch(self, task: dict) -> str:
         ns = self.registry.pick(harness=task["harness"], node_id=task.get("node_id"))
         if ns is None:
@@ -52,6 +79,7 @@ class TaskManager:
         env = P.make(P.T_TASK_START, {
             "task_id": task["id"], "goal": task["goal"], "harness": task["harness"],
             "context_package": ctx_pkg,
+            "restore_files": task.get("restore_files"),
         }, task_id=task["id"], node_id=ns.node_id)
         try:
             await ns.ws.send_json(env)
@@ -77,7 +105,8 @@ class TaskManager:
             pass  # progress 明细走 events 表
         elif t == P.T_TASK_RESULT:
             ok = bool(pl.get("ok"))
-            task["result"] = {"ok": ok, "output": pl.get("output", ""), "artifacts": pl.get("artifacts", [])}
+            task["result"] = {"ok": ok, "output": pl.get("output", ""), "artifacts": pl.get("artifacts", []),
+                              "handoff": pl.get("handoff")}
             # 竞态兜底：节点侧 canceled 标志可能因毫秒级并发丢失；中央看到
             # canceling 状态下的失败结果，同样认定被取消（幂等，不影响正常失败）
             if not ok and task.get("status") == "canceling":

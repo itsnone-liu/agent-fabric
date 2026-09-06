@@ -41,3 +41,15 @@
 
 - 本机节点 unit 名是 `fabric-node-local`（不是 fabric-node），改代码后必须 `systemctl restart fabric-node-local`（曾因 start 幂等踩坑：旧进程存活 8h 用旧代码旧环境）。
 - 麦片部署 = rsync（非 git），改完中央/共享代码要手动同步。
+
+## handoff（任务可续）—— 2026-09-06 第二轮
+
+- 单测+E2E：tests/test_handoff.py 5 项（快照差分/路径逃逸/超限跳过/跨节点续跑/不存在任务）全过；全套 11/11。
+- 真机跨机：mapian(mimo) 创建 chain_demo.py → handoff 捕获 → `resume T-2453c1 @test-node` → 本机恢复文件、模型在**原文件基础上**追加修改（保留 mapian 的首行）、运行输出正确。
+- 失败任务也带 handoff（504 中断后文件照常上报）→ `resume` 失败任务即断点续跑。
+- 链式语义：节点把"恢复且未变"的文件并入自己的 handoff，resume(resume(T)) 任意长度不断档。
+- 已知：zen 免费层偶发 `504 Upstream idle timeout`（本轮 T-c89462 尾部被截，工作成果完好落盘）；重跑/resume 即可。
+
+### 部署教训（重要）
+麦片 venv 是 pip 装进 site-packages 的副本，`/opt/agent-fabric/fabric/` 源码树是"装饰品"——rsync 源码树不生效。正确姿势：同步到
+`/opt/agent-fabric/.venv/lib/python3.10/site-packages/fabric/`。本机无此问题（fabric-node-local 用源码树 cwd 直跑）。

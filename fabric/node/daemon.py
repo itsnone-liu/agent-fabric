@@ -18,6 +18,7 @@ from pathlib import Path
 import websockets
 
 from ..shared import protocol as P
+from . import workspace as WS
 from .adapters.base import RunContext
 from .adapters.echo import EchoAdapter
 from .adapters.opencode import OpenCodeAdapter
@@ -129,6 +130,21 @@ class FabricNode:
         harness = pl.get("harness", "echo")
         goal = pl.get("goal", "")
 
+        # 跨节点续跑：先落盘上一轮 handoff 文件，再做快照（恢复的文件算"既有状态"）
+        restored = []
+        if pl.get("restore_files"):
+            try:
+                restored = WS.restore(self.workspace, pl["restore_files"])
+                if restored:
+                    await self._send(ws, P.make(P.T_TASK_PROGRESS,
+                                                {"task_id": tid, "text": f"handoff 恢复 {len(restored)} 个文件: {', '.join(restored[:5])}"},
+                                                task_id=tid, node_id=self.node_id))
+            except Exception as e:
+                await self._send(ws, P.make(P.T_TASK_PROGRESS,
+                                            {"task_id": tid, "text": f"handoff 恢复失败（继续裸跑）: {e!r}"},
+                                            task_id=tid, node_id=self.node_id))
+        before = WS.snapshot(self.workspace)
+
         await self._send(ws, P.make(P.T_TASK_ACCEPTED, {"task_id": tid}, task_id=tid, node_id=self.node_id))
         adapter = self.adapters.get(harness)
         if adapter is None:
@@ -147,9 +163,30 @@ class FabricNode:
                              context_package=pl.get("context_package"))
             res = await adapter.start(goal, ctx, progress)
             canceled = tid in self._cancel
+            # 任务可续：差分工作区 → handoff 包随 result 上报（V0.5 内联文本，限量见 workspace.py）
+            handoff = None
+            try:
+                diff = WS.collect_changed(self.workspace, before)
+                files = diff["files"]
+                # 链式续跑：本轮恢复且仍存在的文件并入 handoff（未修改也带上），
+                # 保证 resume(resume(T)) 任意长度链条不丢工作区状态
+                for rel in restored:
+                    if rel in files:
+                        continue
+                    p = self.workspace / rel
+                    if p.is_file():
+                        try:
+                            files[rel] = p.read_text(encoding="utf-8")
+                        except (UnicodeDecodeError, OSError):
+                            continue
+                if files or diff["skipped"]:
+                    handoff = {"files": files, "skipped": diff["skipped"],
+                               "tail": res.output[-800:], "restored": restored}
+            except Exception:
+                pass
             await self._send(ws, P.make(P.T_TASK_RESULT,
                                         {"task_id": tid, "ok": res.ok, "output": res.output[:20000],
-                                         "artifacts": res.artifacts,
+                                         "artifacts": res.artifacts, "handoff": handoff,
                                          **({"canceled": True} if canceled else {})},
                                         task_id=tid, node_id=self.node_id))
             # 任务完成后提交经验候选（PLAN §18：节点只交 candidate，入库由中央审）

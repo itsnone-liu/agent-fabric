@@ -8,7 +8,7 @@ KNOWN_HARNESSES = {"echo", "opencode", "dsh", "hermes"}
 
 @dataclass
 class Action:
-    kind: str = "help"  # help / status / run / cancel / unknown
+    kind: str = "help"  # help / status / run / cancel / resume / unknown
     node: str | None = None
     harness: str = "echo"
     goal: str = ""
@@ -26,16 +26,31 @@ def parse_command(text: str) -> Action:
     if low in ("status", "状态"):
         a.kind = "status"
         return a
-    if low in ("memory", "memory list", "记忆"):
-        a.kind = "memory_list"
-        return a
     if low.startswith("memory search ") or low.startswith("记忆搜索 "):
         a.kind = "memory_search"
         a.goal = s.split(None, 2)[2] if len(s.split(None, 2)) > 2 else ""
         return a
+    if low.startswith("memory") or low.startswith("记忆"):
+        a.kind = "memory_list"
+        return a
     if low.startswith("cancel ") or low.startswith("取消 "):
         a.kind = "cancel"
         a.task_id = s.split(None, 1)[1].strip()
+        return a
+    if low.startswith("resume ") or low.startswith("续跑 "):
+        a.kind = "resume"
+        toks = s.split()[1:]
+        if toks and toks[0].upper().startswith("T-"):
+            a.task_id = toks.pop(0)
+        while toks and (toks[0].startswith("@") or toks[0].lower() in KNOWN_HARNESSES):
+            t0 = toks.pop(0)
+            if t0.startswith("@"):
+                a.node = t0[1:]
+            else:
+                a.harness = t0.lower()
+        a.goal = " ".join(toks).strip()  # 可选追加指示
+        if not a.task_id:
+            a.kind = "help"
         return a
     if low.startswith("run ") or low == "run":
         a.kind = "run"
@@ -56,10 +71,12 @@ def parse_command(text: str) -> Action:
 
 def help_text() -> str:
     return (
-        "Agent Fabric 命令（V0）：\n"
-        "  run [@节点] [harness] <任务>   例：run echo probe ／ run @mapian opencode probe ／ run @mapian echo !ls -la\n"
-        "  status                        节点与任务状态\n"
-        "  cancel <任务ID>               取消任务\n"
-        "  memory list / memory search <关键词>\n"
+        "Agent Fabric 命令（V0.5）：\n"
+        "  run [@节点] [harness] <任务>    例：run echo probe ／ run @mapian opencode 写个fib.py并运行\n"
+        "  resume <任务ID> [@节点] [harness] [追加指示]\n"
+        "                                 跨节点续跑：恢复上一轮工作区文件+前情提要，例：resume T-abc123 @test-node\n"
+        "  status                         节点与任务状态\n"
+        "  cancel <任务ID>                取消任务\n"
+        "  memory / memory search <关键词>\n"
         "（自然语言入口 V1 接入；V0 先用命令）"
     )
