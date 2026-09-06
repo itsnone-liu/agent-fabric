@@ -107,6 +107,17 @@ def create_app(db_path: str | None = None) -> FastAPI:
         except Exception as e:
             hub.console(f"[auto-crystallize] {e!r}")
 
+    @app.post("/api/improve")
+    async def improve_cron():
+        """自我审计（fabric-improve.timer 每日调；`improve` 命令同一逻辑）。"""
+        from .selfimprove import run_audit
+        focus = getattr(session, "focus", None)
+        r = await run_audit(tm, memory, node=focus)
+        if r.get("ok"):
+            await hub.broadcast("🔍 每日自审报告（" + str(r.get("task_id")) + "）：\n"
+                                + str(r["report"])[:900])
+        return r
+
     @app.post("/api/dream")
     async def dream_cron():
         """外部 cron/timer 入口（V0.10.1：systemd timer 每 6h 调一次）。"""
@@ -185,6 +196,14 @@ def create_app(db_path: str | None = None) -> FastAPI:
             return (f"🧊 已结晶技能 {res['skill_id']}（{res['n_sources']} 条经验·{how}）\n"
                     + res["draft"][:600]
                     + "\n（不满意 memory forget 该 id 后换关键词重试）"), None
+        if act.kind == "improve":
+            from .selfimprove import run_audit
+            focus = getattr(session, "focus", None)
+            r = await run_audit(tm, memory, node=focus)
+            if r.get("ok"):
+                return "🔍 自审报告（" + str(r.get("task_id")) + "）：\n" + str(r["report"])[:900] + \
+                       "\n（人拍板后才动手改；满意与否都可直接说想法）", None
+            return "⚠️ 自审未完成：" + str(r.get("hint")), None
         if act.kind == "dream":
             stat = memory.dream()
             return ("💤 dream 整理完成：task 流水清理 {} 条、相似合并 {} 组、"

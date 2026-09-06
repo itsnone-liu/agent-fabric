@@ -54,6 +54,9 @@ def parse_command(text: str) -> Action:
         a.kind = "memory_forget"
         a.goal = s.split(None, 2)[2] if len(s.split(None, 2)) > 2 else ""
         return a
+    if low == "improve" or low == "自审":
+        a.kind = "improve"
+        return a
     if low == "dream" or low == "记忆整理":
         a.kind = "dream"
         return a
@@ -148,6 +151,7 @@ def help_text() -> str:
         "  memory add <project|skill|fact|lesson|decision> <内容>   人工注入中央记忆（即审即入）\n"
         "  memory crystallize <主题>   经验聚类→节点模型蒸馏→结晶为技能（≥2条相关经验）\n"
         "  memory forget <id> / memory edit <id> <新内容> / dream   删除 / 更正 / 整理\n"
+        "  improve   自我审计：收集代码/测试/记忆健康 → 节点模型出改进建议（只建议不改码）\n"
         "  candidates / review <id|all> <promote|discard>   经验候选审核（promote→experience入库）\n"
         "  tasks [N] / task <T-id> / memories [N] / skills   管理面板\n"
     )

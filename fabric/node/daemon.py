@@ -190,7 +190,9 @@ class FabricNode:
                                          **({"canceled": True} if canceled else {})},
                                         task_id=tid, node_id=self.node_id))
             # 任务完成后提交经验候选（PLAN §18：节点只交 candidate，入库由中央审）
-            self._emit_memory_candidate(ws, harness, goal, res.ok, tid, res.output)
+            # V0.12：internal 任务（蒸馏/自审计）不回流——系统任务的经验不是业务经验
+            if not (env.get("payload") or {}).get("internal"):
+                self._emit_memory_candidate(ws, harness, goal, res.ok, tid, res.output)
         except asyncio.CancelledError:
             raise
         except Exception as e:

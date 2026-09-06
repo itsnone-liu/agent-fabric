@@ -85,6 +85,7 @@ class TaskManager:
         env = P.make(P.T_TASK_START, {
             "task_id": task["id"], "goal": task["goal"], "harness": task["harness"],
             "context_package": ctx_pkg,
+            "internal": bool(task.get("internal")),
             "restore_files": task.get("restore_files"),
         }, task_id=task["id"], node_id=ns.node_id)
         try:
