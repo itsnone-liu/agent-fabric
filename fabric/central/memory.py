@@ -429,8 +429,38 @@ class MemoryManager:
         return None
 
     # ---- capture / review（节点候选 → 审核，原有流程）----
-    def ingest_candidate(self, payload: dict, source_task: str | None = None) -> str:
-        return self.store.add_memory_candidate(payload, source_task)
+    # 教训型关键词（V0.11 自动入库的审慎边界）：失败/纠正类经验高价值高风险，留人审
+    _WARN_RE = None  # 类级缓存，见 ingest_candidate 内初始化
+
+    def ingest_candidate(self, payload: dict, source_task: str | None = None) -> dict:
+        """V0.11（用户 2026-09-06 拍板）：成功任务 + 非教训类 LESSON 自动入库；
+        教训型（失败/踩坑/纠正类）仍 pending 留人审。"""
+        import re as _re
+        if MemoryManager._WARN_RE is None:
+            MemoryManager._WARN_RE = _re.compile(
+                r"失败|错误|踩坑|教训|注意|不要|切忌|必须先|超时|挂死|风险|反而|坑")
+        content = str(payload.get("content") or "")
+        mid = self.store.add_memory_candidate(payload, source_task)
+        if " failed @" not in content and not MemoryManager._WARN_RE.search(content):
+            r = self.store.review_memory_candidate(mid, "promote",
+                                                   kind="experience", importance=2)
+            return {"candidate": mid, "auto_promoted": bool(r),
+                    "memory": (r or {}).get("id"), "content": content}
+        return {"candidate": mid, "auto_promoted": False, "memory": None, "content": content}
+
+    def edit_memory(self, mid: str, content: str) -> dict:
+        """更正已入库记忆（用户 2026-09-06：入库部分允许更正）。
+        内容更新后向量立即重算，旧 embedding 不残留。"""
+        mid = mid.strip()
+        if not self.store.update_memory_content(mid, content):
+            return {"ok": False, "hint": f"记忆 {mid} 不存在"}
+        try:
+            if self.embedder is not None and not getattr(self.embedder, "disabled", False):
+                vec = self.embedder.embed([content])[0]
+                self.store.set_memory_embedding(mid, np.asarray(vec, dtype=np.float32).tobytes())
+        except Exception:
+            pass  # 向量失败靠启动回填补
+        return {"ok": True, "id": mid}
 
     def list_candidates(self, status: str | None = None) -> list[dict]:
         return self.store.list_memory_candidates(status=status)

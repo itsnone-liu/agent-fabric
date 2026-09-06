@@ -139,16 +139,17 @@ def test_memory_candidate_pipeline(node):
             cands = c.get("/api/memory/candidates").json()["candidates"]
             found = next((x for x in cands if x.get("source_task") == tid), None)
             time.sleep(0.2)
-        assert found, "含 [LESSON] 的任务应产生 memory candidate"
-        assert "echo链路" in found["content"]
+        # V0.11：中性 LESSON 自动入库（不占审队列），任务 2 秒内完成入库
+        deadline = time.time() + 5
+        ok_auto = False
+        while time.time() < deadline and not ok_auto:
+            res = c.get("/api/memory", params={"q": "echo链路"}).json()["results"]
+            ok_auto = any(m.get("kind") == "experience" for m in res)
+            time.sleep(0.2)
+        assert ok_auto, "中性 LESSON 应自动入库为 experience"
         cands = c.get("/api/memory/candidates").json()["candidates"]
+        assert not any(x.get("source_task") == tid for x in cands), "自动入库后不应留 pending"
         assert not any(x.get("source_task") == tid2 for x in cands), "无 LESSON 不应回流"
-        # promote → 可检索
-        r = c.post("/api/memory/review", json={"id": found["id"], "action": "promote",
-                                               "kind": "experience", "importance": 2})
-        assert r.json().get("status") == "promoted"
-        res = c.get("/api/memory", params={"q": "记忆流水线"}).json()["results"]
-        assert any("echo链路" in m["content"] for m in res)
 
 
 def test_status_and_help(node):

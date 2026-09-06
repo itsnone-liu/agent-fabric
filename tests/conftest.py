@@ -44,12 +44,15 @@ def cluster(tmp_path_factory):
                 time.sleep(0.1)
 
     # 自定义 adapter 注册为 "opencode"（router 只认 KNOWN_HARNESSES；dict 键=harness 名）
-    for nid, adapters in (("node-a", {"opencode": MakeFileAdapter(), "echo": EchoAdapter()}),
-                          ("node-b", {"opencode": ReadFileAdapter(), "echo": EchoAdapter()})):
+    # node-b 工作区预置 demo.txt：readfile 系测试自足，不依赖 handoff 链先行
+    wb = tmp_path_factory.mktemp("ws-node-b")
+    (wb / "demo.txt").write_text("HANDOFF-SENTINEL demo 内容", encoding="utf-8")
+    for nid, adapters, ws in (("node-a", {"opencode": MakeFileAdapter(), "echo": EchoAdapter()},
+                                tmp_path_factory.mktemp("ws-node-a")),
+                              ("node-b", {"opencode": ReadFileAdapter(), "echo": EchoAdapter()}, wb)):
         async def _run(nid=nid, adapters=adapters):
             fn = FabricNode(node_id=nid, token="dev-token", url=f"ws://127.0.0.1:{port}",
-                            adapters=adapters,
-                            workspace=str(tmp_path_factory.mktemp(f"ws-{nid}")))
+                            adapters=adapters, workspace=str(ws))
             await fn.run()
         threading.Thread(target=lambda: asyncio.run(_run()), daemon=True).start()
 

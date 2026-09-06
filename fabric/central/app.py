@@ -79,6 +79,16 @@ def create_app(db_path: str | None = None) -> FastAPI:
             asyncio.get_running_loop().create_task(_auto_crystallize_notify(seed))
         return r or {"error": "candidate not found"}
 
+    async def _auto_ingest_notify(r: dict):
+        """自动入库轻通知 + 自动结晶判断（更正 memory edit / 删除 memory forget）。"""
+        try:
+            await hub.broadcast(f"✅ 经验自动入库 {r.get('memory')}："
+                                f"{str(r.get('content'))[:80]}"
+                                "\n（更正：memory edit <id> <新内容>；删除：memory forget <id>）")
+            await _auto_crystallize_notify(str(r.get("content") or "")[:200])
+        except Exception as e:
+            hub.console(f"[auto-ingest] {e!r}")
+
     async def _auto_crystallize_notify(seed: str):
         """自动蒸馏 + 结果通知（人可见可撤——不满意 memory forget）。"""
         try:
@@ -175,6 +185,13 @@ def create_app(db_path: str | None = None) -> FastAPI:
             stat = memory.dream()
             return ("💤 dream 整理完成：task 流水清理 {} 条、相似合并 {} 组、"
                     "零命中降权 {} 条".format(stat["task_trimmed"], stat["merged"], stat["demoted"])), None
+        if act.kind == "memory_edit":
+            parts = act.goal.strip().split(None, 1)
+            if len(parts) < 2 or not parts[0].startswith("M-"):
+                return "用法：memory edit <M-id> <新内容>", None
+            r = memory.edit_memory(parts[0], parts[1])
+            return (f"✏️ 已更正 {parts[0]}：{parts[1][:80]}"
+                    if r.get("ok") else "❌ " + r.get("hint", "未找到")), None
         if act.kind == "memory_forget":
             ok = memory.store.delete_memory(act.goal.strip().split()[0]) if act.goal.strip() else False
             return ("🗑️ 已删除记忆 " + act.goal.strip() if ok
@@ -295,7 +312,9 @@ def create_app(db_path: str | None = None) -> FastAPI:
                  P.T_TASK_PROGRESS, P.T_TASK_RESULT, P.T_TASK_FAILED):
             registry.touch(ns.node_id)
         if t == P.T_MEMORY_CANDIDATE:
-            store.add_memory_candidate(env.get("payload", {}), env.get("task_id"))
+            r = memory.ingest_candidate(env.get("payload", {}), env.get("task_id"))
+            if r.get("auto_promoted"):
+                asyncio.get_running_loop().create_task(_auto_ingest_notify(r))
         if env.get("task_id") and t.startswith("task."):
             await tm.on_event(env)
         store.add_event(env)

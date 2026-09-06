@@ -184,6 +184,14 @@ class Store:
             self.db.execute("UPDATE memories SET embedding=? WHERE id=?", (blob, mid))
             self.db.commit()
 
+    def update_memory_content(self, mid: str, content: str) -> bool:
+        """更正记忆内容；embedding 清空待重算（旧向量与新内容失配）。"""
+        with self._lock:
+            cur = self.db.execute("UPDATE memories SET content=?, updated_at=?, embedding=NULL WHERE id=?",
+                                  (content[:4000], time.time(), mid))
+            self.db.commit()
+            return cur.rowcount > 0
+
     def delete_memory(self, mid: str) -> bool:
         with self._lock:
             cur = self.db.execute("DELETE FROM memories WHERE id=?", (mid,))

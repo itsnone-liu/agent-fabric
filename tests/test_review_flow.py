@@ -7,8 +7,8 @@ import httpx
 def test_review_flow_e2e(cluster):
     port = cluster
     with httpx.Client(base_url=f"http://127.0.0.1:{port}", timeout=15) as c:
-        # 造候选（run 一个 echo 任务会自动回流经验候选）
-        tid = c.post("/api/say", json={"text": "run @node-a echo 审核闭环验证\n[LESSON] 审核流回路的经验"}).json()["task_id"]
+        # 造候选：教训型 LESSON（含"教训"）不自动入库、留人审（V0.11 语义）
+        tid = c.post("/api/say", json={"text": "run @node-a echo 审核闭环验证\n[LESSON] 504超时教训：别重试直接resume"}).json()["task_id"]
         import time
         for _ in range(50):
             t = [t for t in c.get("/api/tasks").json()["tasks"] if t["id"] == tid]
@@ -22,8 +22,8 @@ def test_review_flow_e2e(cluster):
         r = c.post("/api/say", json={"text": f"review {cid} promote"}).json()["reply"]
         assert "promote 完成 1 条" in r
         # 入库成 experience
-        mems = c.get("/api/memory", params={"q": "审核闭环"}).json()["results"]
-        assert any(m["kind"] == "experience" for m in mems)
+        mems = c.get("/api/memory", params={"q": "504"}).json()["results"]
+        assert any(m["kind"] == "experience" and "resume" in m["content"] for m in mems)
         # 非法动作拒绝
         r = c.post("/api/say", json={"text": "review MC-notexist promote"}).json()["reply"]
         assert "完成 0 条" in r

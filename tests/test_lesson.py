@@ -35,3 +35,52 @@ def test_lesson_stripped_from_user_reply():
     r = extract_reply(raw)
     assert r and "全部完成" in r
     assert "[LESSON]" not in r and "site-packages" not in r
+
+
+def test_auto_promote_neutral_vs_warn(mem_like=None):
+    """V0.11：成功任务+非教训类自动入库；教训型留人审（真库直测）。"""
+    import tempfile, os
+    from fabric.central.memory import MemoryManager
+    from fabric.central.store import Store
+    s = Store(os.path.join(tempfile.mkdtemp(), "ap.db"))
+    m = MemoryManager(s)
+
+    class _NoEmbed:
+        disabled = True
+        def embed(self, t):
+            return []
+    m.embedder = _NoEmbed()
+
+    r1 = m.ingest_candidate({"kind": "experience",
+                             "content": "[opencode] pandas 中文列名直接 sort_values 可用（T-1 ok @mapian）"})
+    assert r1["auto_promoted"] and r1["memory"].startswith("M-")
+    pend = m.list_candidates(status="pending")
+    assert not pend  # 中性经验不占审队列
+
+    r2 = m.ingest_candidate({"kind": "experience",
+                             "content": "[opencode] 504超时挂死别重试，直接 resume（T-2 failed @mapian）"})
+    assert not r2["auto_promoted"]
+    assert len(m.list_candidates(status="pending")) == 1  # 教训型留审
+
+
+def test_edit_memory_rewrites_content():
+    import tempfile, os, numpy as np
+    from fabric.central.memory import MemoryManager
+    from fabric.central.store import Store
+    s = Store(os.path.join(tempfile.mkdtemp(), "ed.db"))
+    m = MemoryManager(s)
+
+    class _ConstVec:
+        disabled = False
+        def embed(self, t):
+            return [np.ones(512, dtype=np.float32) / np.sqrt(512)]
+    m.embedder = _ConstVec()
+
+    mid = m.store.add_memory("experience", "user", "旧内容 matplotlib 字体", 2)
+    m.store.set_memory_embedding(mid, (np.ones(512) / np.sqrt(512)).astype(np.float32).tobytes())
+    r = m.edit_memory(mid, "更正后：rcParams font.family=SimHei 且 axes.unicode_minus=False")
+    assert r["ok"]
+    rows = [x for x in m.store.all_memories(10) if x["id"] == mid]
+    assert rows and "更正后" in rows[0]["content"]
+    assert rows[0]["embedding"], "编辑后向量应重算"
+    assert m.edit_memory("M-nope", "x")["ok"] is False

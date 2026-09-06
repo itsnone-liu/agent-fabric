@@ -123,3 +123,11 @@
 - auto_crystallize：promote（REST/say 两路径）后 fire-and-forget 自动判断蒸馏——冷却 1h、素材≥3、无 cos≥0.85 同主题 skill 才触发；触发后 🧢 推送结果（人可见可撤）
 - LLM key 问题：零新凭据——蒸馏走节点 opencode 免费模型，central 零 LLM key（能力租借自节点）
 - 测试 44/44（素材不足/同主题判重两条路径分别用 BM25-only 与常向量 embedder 验证）
+
+## V0.11：自动入库 + 记忆更正 —— 2026-09-06 第十一轮
+
+- 用户拍板：①自动 promote 开启 ②入库允许更正
+- ingest_candidate 新语义：成功任务+非教训类 LESSON（无 失败/踩坑/教训/不要/超时… 词）自动入库 experience（importance=2）+轻推送（带 edit/forget 提示）+触发 auto_crystallize；教训型仍 pending 人审——高价值高风险不 automation
+- memory edit <id> <新内容>：更正任意记忆（含结晶技能）；embedding 清空后立即重算，旧向量不残留
+- 测试自足化：cluster node-b 工作区预置 demo.txt（followup 测试曾隐式依赖 handoff 测试先行恢复文件——测试顺序耦合）
+- 测试 46/46
