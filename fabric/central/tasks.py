@@ -171,6 +171,22 @@ class TaskManager:
         msg = await self.dispatch(task)
         return task, msg
 
+    async def send_message(self, task_id: str, text: str) -> str:
+        """V2a：任务运行中插话 → T_TASK_MESSAGE → 节点写 inbox.md。"""
+        task = self.store.get_task(task_id)
+        if task is None:
+            return ""
+        ns = self.registry.nodes.get(task.get("node_id") or "")
+        if ns and ns.status == "online":
+            try:
+                await ns.ws.send_json(P.make(P.T_TASK_MESSAGE,
+                    {"text": text[:2000]}, task_id=task_id, node_id=ns.node_id,
+                    run_id=task.get("last_run")))
+                return "已插话"
+            except Exception:
+                pass
+        return ""
+
     async def cancel(self, task_id: str, reason: str = "") -> str:
         """V2a：cancel 可带原因——kill 照旧（急中断），原因存 task 供 resume 注入
         （"为什么被打断"在续跑时 agent 才知道，避免再犯）。"""

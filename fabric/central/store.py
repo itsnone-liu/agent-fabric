@@ -65,6 +65,7 @@ class Store:
         self.db.execute("PRAGMA journal_mode=WAL")
         self.db.executescript(SCHEMA)
         self._migrate_memories_embedding()
+        self._migrate_tasks_cancel_reason()
         self.db.commit()
         self._lock = threading.Lock()
 
@@ -72,12 +73,13 @@ class Store:
     def save_task(self, task: dict):
         with self._lock:
             self.db.execute(
-                "INSERT INTO tasks(id,goal,harness,node_id,status,result,created_at,updated_at,internal) VALUES(?,?,?,?,?,?,?,?,?) "
+                "INSERT INTO tasks(id,goal,harness,node_id,status,result,created_at,updated_at,internal,cancel_reason) VALUES(?,?,?,?,?,?,?,?,?,?) "
                 "ON CONFLICT(id) DO UPDATE SET goal=excluded.goal,harness=excluded.harness,node_id=excluded.node_id,"
-                "status=excluded.status,result=excluded.result,updated_at=excluded.updated_at,internal=excluded.internal",
+                "status=excluded.status,result=excluded.result,updated_at=excluded.updated_at,internal=excluded.internal,cancel_reason=excluded.cancel_reason",
                 (task["id"], task.get("goal"), task.get("harness"), task.get("node_id"),
                  task.get("status"), json.dumps(task.get("result"), ensure_ascii=False),
-                 task.get("created_at"), task.get("updated_at"), 1 if task.get("internal") else 0))
+                 task.get("created_at"), task.get("updated_at"), 1 if task.get("internal") else 0,
+                 task.get("cancel_reason")))
             self.db.commit()
 
     # ---- V1.2 Task/Run 分离：runs 访问层 ----
@@ -191,6 +193,13 @@ class Store:
         return {"id": mid, "candidate": cid, "status": "promoted", "content": row["content"]}
 
     # ---- memories（已确认记忆；V0.7 检索=BM25×向量融合，见 memory.py）----
+
+    def _migrate_tasks_cancel_reason(self):
+        """V2a：tasks 加 cancel_reason 列（幂等）。"""
+        cols = {r[1] for r in self.db.execute("PRAGMA table_info(tasks)")}
+        if "cancel_reason" not in cols:
+            self.db.execute("ALTER TABLE tasks ADD COLUMN cancel_reason TEXT")
+            self.db.commit()
 
     def _migrate_memories_embedding(self):
         """加 embedding BLOB 列（幂等）。"""
