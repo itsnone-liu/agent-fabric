@@ -26,6 +26,10 @@ def parse_command(text: str) -> Action:
     if low in ("status", "状态"):
         a.kind = "status"
         return a
+    if low.startswith("memory crystallize ") or low.startswith("经验结晶 "):
+        a.kind = "memory_crystallize"
+        a.goal = s.split(None, 2)[2]
+        return a
     if low.startswith("memory add ") or low.startswith("记忆添加 "):
         a.kind = "memory_add"
         parts = s.split(None, 3)  # memory add <kind> <text...>
@@ -38,6 +42,36 @@ def parse_command(text: str) -> Action:
         return a
     if low.startswith("memory") or low.startswith("记忆"):
         a.kind = "memory_list"
+        return a
+    if low.startswith("task ") and s.split(None, 1)[1].strip().upper().startswith("T-"):
+        a.kind = "task_detail"
+        a.task_id = s.split(None, 1)[1].strip().split()[0]
+        return a
+    if low == "tasks" or low == "任务" or low.startswith("tasks ") or low.startswith("任务 "):
+        a.kind = "tasks_list"
+        toks = s.split()
+        a.harness = toks[1] if len(toks) > 1 else ""   # 复用存 N
+        return a
+    if low == "skills" or low == "技能" or low.startswith("skills ") or low.startswith("技能 "):
+        a.kind = "skills_list"
+        return a
+    if low == "memories" or low == "记忆库" or low.startswith("memories ") or low.startswith("记忆库 "):
+        a.kind = "memories_list"
+        toks = s.split()
+        a.harness = toks[1] if len(toks) > 1 else ""
+        return a
+    if low == "candidates" or low == "候选" or low.startswith("candidates ") or low.startswith("候选 "):
+        a.kind = "candidates_list"
+        return a
+    if low.startswith("review ") or low.startswith("审核 "):
+        a.kind = "review"
+        toks = s.split()
+        if len(toks) >= 3 and toks[1].lower() in ("all", "全部"):
+            a.task_id = "all"
+            a.harness = toks[2].lower()          # 动作 promote/discard
+        elif len(toks) >= 3 and toks[1].upper().startswith(("MC-", "M-")):
+            a.task_id = toks[1]
+            a.harness = toks[2].lower()          # 动作
         return a
     if low.startswith("cancel ") or low.startswith("取消 "):
         a.kind = "cancel"
@@ -85,5 +119,8 @@ def help_text() -> str:
         "  cancel <任务ID>                取消任务\n"
         "  memory / memory search <关键词>\n"
         "  memory add <project|skill|fact|lesson|decision> <内容>   人工注入中央记忆（即审即入）\n"
+        "  memory crystallize <主题>   经验聚类→结晶为技能（≥2条相关经验）\n"
+        "  candidates / review <id|all> <promote|discard>   经验候选审核（promote→experience入库）\n"
+        "  tasks [N] / task <T-id> / memories [N] / skills   管理面板\n"
         "（自然语言入口 V1 接入；V0 先用命令）"
     )

@@ -73,3 +73,13 @@
 - 测试：22/22（新增5项：BM25命中/假向量融合公式/空结果/回填/真模型smoke）
 - 真机：零共同bigram改写query"更新完程序服务没生效如何排查"→运维约定0.735分召回第一（bigram版此query返回空）；E2E任务mimo引用[项目知识]准确作答 ✅
 - 运维注记：curl 查中文参数须 -G --data-urlencode（裸UTF-8请求行被h11拒绝）；服务首次检索调用含模型加载~10s
+
+## 一体化闭环（V0.8）—— 2026-09-06 第五轮
+
+- 皇冠四块齐：①handoff任务可续 ②三级记忆 ③BM25×向量混合检索 ④经验→技能闭环
+- 审核闭环：`candidates` 列待审（18条积压全pending→`review all promote` 18条入experience库）
+- 结晶：`memory crystallize <主题>` 检索聚类 experience/task → 确定性拼接草稿 → skill入库（人过目即审）
+- 面板：`tasks [N]` / `task <T-id>`（含handoff文件列表）/ `memories` / `skills`
+- 检索分改为**检索内归一化**（相对最佳命中0~1）——绝对分在向量模式(0.6×cos)与BM25-only模式分布不可通约，跨模式阈值失效（实测两次翻车）
+- 结晶质量结论：聚类OK，拼接草稿是流水汤——确定性无LLM无法提炼；已删除劣质结晶产物防污染；**V1：结晶蒸馏走节点免费模型**（dispatch内部distill任务）
+- 测试：28/28（+审核闭环E2E、结晶排除skill自噬、噪声过滤）

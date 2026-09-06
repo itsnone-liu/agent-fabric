@@ -33,6 +33,17 @@ MANUAL_KINDS = {"project", "skill", "fact", "lesson", "decision", "preference", 
 
 VEC_WEIGHT, BM25_WEIGHT = 0.6, 0.4
 
+_ANSI = None
+
+
+def _clean(text: str) -> str:
+    """去终端 ANSI 色码/控制符（task 输出尾部常带）。"""
+    global _ANSI
+    if _ANSI is None:
+        import re
+        _ANSI = re.compile(r"\x1b\[[0-9;]*[a-zA-Z]")
+    return _ANSI.sub("", text)
+
 
 def _bm25_scores(docs: list[str], query: str, k1: float = 1.5, b: float = 0.75) -> np.ndarray:
     """确定性 BM25（Lucene 式非负 IDF）。docs 为空返回空数组。"""
@@ -162,9 +173,19 @@ class MemoryManager:
                     mat.append(np.zeros(len(qv), dtype=np.float32))
             v_norm = np.asarray(mat, dtype=np.float32) @ qv  # 已归一化，点积=余弦
             v_norm = np.clip(v_norm, 0.0, 1.0)
-        # 融合：任一路径命中即可入围
-        fused = VEC_WEIGHT * v_norm + BM25_WEIGHT * b_norm
+        # 融合：任一路径命中即可入围；单路径不可用时权重重归一化
+        # （0.6/0.4 预设双路径；BM25-only 上限 0.4 会压死下游阈值，如 crystallize 的 score_floor）
+        if qv is not None:
+            vw, bw = VEC_WEIGHT, BM25_WEIGHT
+        else:  # 向量不可用：全权重给 BM25
+            vw, bw = 0.0, 1.0
+        fused = vw * v_norm + bw * b_norm
         fused[b_norm + v_norm <= 0] = -1.0
+        # 检索内归一化：_score = 相对本次最佳命中的相关度(0~1)。
+        # 向量模式绝对分系统性偏低(0.6×cos)，跨模式绝对阈值不可通约，归一化后统一。
+        fmax = float(fused[fused > 0].max()) if (fused > 0).any() else 0.0
+        if fmax > 0:
+            fused = np.where(fused > 0, fused / fmax, -1.0)
         order = np.argsort(-fused)[:k]
         out = []
         for i in order:
@@ -218,7 +239,7 @@ class MemoryManager:
     # ---- capture：任务完成自动入库（task 级，机器自动、零审核）----
     def on_task_result(self, task: dict):
         r = task.get("result") or {}
-        tail = ((r.get("handoff") or {}).get("tail") or r.get("output") or "")[-400:]
+        tail = _clean(((r.get("handoff") or {}).get("tail") or r.get("output") or ""))[-400:]
         content = f"[{'ok' if r.get('ok') else 'failed'}] {task.get('goal', '')[:200]} → @{task.get('node_id')} {task.get('harness')} | 尾部: {tail}"
         self._insert("task", "task", content, 1, task["id"], 0.5)
 
@@ -233,6 +254,33 @@ class MemoryManager:
                                      importance=importance, source_task=source_task,
                                      confidence=confidence,
                                      embedding=(vec.tobytes() if vec is not None else None))
+
+    # ---- crystallize：经验→技能结晶（V0.8 一体化；确定性零token草拟，人确认）----
+    def crystallize(self, query: str, min_sources: int = 2, k: int = 10) -> dict:
+        """把检索聚类的相关经验/任务记忆草拟成一条 skill。
+
+        规则：素材限 experience/task 两级（skill 不吃自己，避免滚雪球）；
+        相关性绝对下限 0.25 剔杂音（BM25-only 与向量模式分布不同，不做激进
+        相对阈值——误杀真实素材比混入杂音代价大，草稿本就给人过目）；
+        experience 排前（审核过的教训 > 任务流水账）；不足 min_sources 条拒绝。
+        """
+        cand = [m for m in self.search(query, k=k)
+                if m.get("kind") in ("experience", "task") and m.get("_score", 0.0) >= 0.25]
+        if not cand:
+            return {"ok": False, "n_sources": 0,
+                    "hint": "无相关经验（experience/task）——先积累或换关键词"}
+        hits = cand
+        hits.sort(key=lambda m: (m.get("kind") != "experience", -m.get("_score", 0)))
+        if len(hits) < min_sources:
+            return {"ok": False, "n_sources": len(hits),
+                    "hint": f"相关经验仅 {len(hits)} 条（需≥{min_sources}），先积累或换关键词"}
+        srcs = [f"{m['id']}({m['kind']})" for m in hits]
+        lines = [f"- {_clean(str(m.get('content', '')))[:180]}" for m in hits]
+        draft = (f"【技能】{query.strip()[:60]}（{len(hits)} 条经验结晶）\n"
+                 + "\n".join(lines)
+                 + f"\n[来源] {' '.join(srcs)}")
+        mid = self._insert("skill", "user", draft, 2, None, 0.6)
+        return {"ok": True, "skill_id": mid, "n_sources": len(hits), "draft": draft}
 
     # ---- capture / review（节点候选 → 审核，原有流程）----
     def ingest_candidate(self, payload: dict, source_task: str | None = None) -> str:
