@@ -61,6 +61,7 @@ class Store:
         self.db.row_factory = sqlite3.Row
         self.db.execute("PRAGMA journal_mode=WAL")
         self.db.executescript(SCHEMA)
+        self._migrate_memories_embedding()
         self.db.commit()
         self._lock = threading.Lock()
 
@@ -151,53 +152,42 @@ class Store:
             self.db.commit()
         return {"id": mid, "candidate": cid, "status": "promoted"}
 
-    # ---- memories（已确认记忆；V0 关键词检索，PG+pgvector 后换向量+BM25 融合）----
+    # ---- memories（已确认记忆；V0.7 检索=BM25×向量融合，见 memory.py）----
+
+    def _migrate_memories_embedding(self):
+        """加 embedding BLOB 列（幂等）。"""
+        cols = {r[1] for r in self.db.execute("PRAGMA table_info(memories)")}
+        if "embedding" not in cols:
+            self.db.execute("ALTER TABLE memories ADD COLUMN embedding BLOB")
+            self.db.commit()
 
     def add_memory(self, kind: str, scope: str, content: str, importance: int = 1,
                    project: str = "*", source_task: str | None = None,
-                   confidence: float = 0.5) -> str:
+                   confidence: float = 0.5, embedding: bytes | None = None) -> str:
         """直接入库（task 自动记忆 / 人工注入走这里；节点回流走 candidate→review）。"""
         mid = "M-" + uuid.uuid4().hex[:10]
         with self._lock:
-            self.db.execute("INSERT INTO memories(id,kind,scope,project,content,keywords,importance,confidence,source_task,created_at,updated_at) "
-                            "VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+            self.db.execute("INSERT INTO memories(id,kind,scope,project,content,keywords,importance,confidence,source_task,created_at,updated_at,embedding) "
+                            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
                             (mid, kind, scope, project, (content or "")[:4000], "", importance,
-                             confidence, source_task, time.time(), time.time()))
+                             confidence, source_task, time.time(), time.time(), embedding))
             self.db.commit()
         return mid
+
+    def set_memory_embedding(self, mid: str, blob: bytes):
+        with self._lock:
+            self.db.execute("UPDATE memories SET embedding=? WHERE id=?", (blob, mid))
+            self.db.commit()
+
+    def all_memories(self, limit: int = 2000) -> list[dict]:
+        self._migrate_memories_embedding()
+        rows = self.db.execute("SELECT * FROM memories ORDER BY updated_at DESC LIMIT ?", (limit,)).fetchall()
+        return [dict(r) for r in rows]
 
     def get_memories_by_task(self, task_id: str) -> list[dict]:
         rows = self.db.execute("SELECT * FROM memories WHERE source_task=? ORDER BY updated_at DESC",
                                (task_id,)).fetchall()
         return [dict(r) for r in rows]
-
-    def search_memories(self, query: str, k: int = 5) -> list[dict]:
-        """V0.6：CJK bigram + 拉丁词 混合分词的确定性检索（零 token、零依赖）。
-
-        中文无空格，按空格分词会把整句变一个 token 导致全脱靶（2026-09-06 实测）；
-        换成：拉丁/数字词 + 中文相邻双字gram，集合交集计分 + importance 加权。
-        V1 迁 PG+pgvector 后换 向量+BM25 融合。
-        """
-        qtoks = _tokenize(query)
-        if not qtoks:
-            return []
-        rows = self.db.execute("SELECT * FROM memories ORDER BY importance DESC, updated_at DESC LIMIT 500").fetchall()
-        scored = []
-        for r in rows:
-            mtoks = _tokenize(r["content"] or "")
-            if not mtoks:
-                continue
-            hit = qtoks & mtoks
-            if not hit:
-                continue
-            score = len(hit) * 2 + (r["importance"] or 1)
-            scored.append((score, dict(r)))
-        scored.sort(key=lambda x: -x[0])
-        out = []
-        for _, m in scored[:k]:
-            m.pop("keywords", None)
-            out.append(m)
-        return out
 
     def list_memories(self, limit: int = 100) -> list[dict]:
         rows = self.db.execute("SELECT * FROM memories ORDER BY updated_at DESC LIMIT ?", (limit,)).fetchall()

@@ -63,3 +63,13 @@
 - 测试：17/17（新增 6 项：自动捕获/预算截断/父记忆/三tier渲染/say注入E2E/中文检索）
 - 真机：注入 project 运维约定 → 中文 goal → mimo 回答"systemctl status fabric-node，引用[项目知识]" ✅
 - 模型稳定性观察：nemotron-3.5-lightning-free 两次挂死(上游流空闲,480s行超时兜底)；mimo-v2.5-free 全天稳定——交互任务建议路由 mapian/mimo
+
+## 混合检索（V0.7）—— 2026-09-06 第四轮
+
+- 方案：BM25×向量 0.6/0.4 融合，仍跑 SQLite（V1 迁 PG+pgvector 同构升级）；零 API 费用
+- 向量：fastembed BAAI/bge-small-zh-v1.5（512维本地 ONNX，hf-mirror 拉取，零token）惰性加载 + 启动后台回填旧记忆
+- BM25：手写 Lucene 式（idf=ln(1+..) 恒非负）——**rank_bm25 库在微语料上 epsilon 地板把命中打成负分**（实测单文档命中得-0.549），弃用
+- 退化链：向量模型不可得→纯BM25；BM25异常→纯向量；两者皆空→不注入（记忆问题不阻塞任务）
+- 测试：22/22（新增5项：BM25命中/假向量融合公式/空结果/回填/真模型smoke）
+- 真机：零共同bigram改写query"更新完程序服务没生效如何排查"→运维约定0.735分召回第一（bigram版此query返回空）；E2E任务mimo引用[项目知识]准确作答 ✅
+- 运维注记：curl 查中文参数须 -G --data-urlencode（裸UTF-8请求行被h11拒绝）；服务首次检索调用含模型加载~10s
