@@ -183,3 +183,12 @@
 - 真 bug 顺手修：create() 的 task dict 从未带 internal 键（存库恒 0，蒸馏任务静默靠巧合）；daemon RESULT 回包补 run_id（central 据此落 run 终态）
 - 真机：retry T-6419cb dsh → 同 task 双 run 轨迹（codex 建 v12b.txt → dsh 复核"一致无需覆盖"——换 harness 复核场景自然涌现）
 - 测试 49/49
+
+## V2a：插话注入 + 带因中断 —— 2026-09-06 第十七轮
+
+- 用户拍板：不执着 ACP——只有"危险指令急中断"才需要，且 cancel(kill) 已覆盖；ACP 彻底放下
+- 插话：任务运行中说话 → 排队续跑（兜底保留）+ T_TASK_MESSAGE → 节点写 workspace/.fabric/inbox.md（带时间戳）；prompt 预置约定"每完成一步检查 inbox.md，处理完删该行"——利用 agent 自主读文件的本性，零长连接
+- 带因中断：cancel <T-id> <原因> → kill 照旧（急中断）+ 原因存 tasks.cancel_reason 列 → resume 时注入"[用户中断原因]…（上次因此被中断，务必调整）"
+- 坑：save_task 的 INSERT 列清单是白名单——task dict 多余键静默丢弃（cancel_reason 存不上），加列必须同步改 INSERT/UPDATE；python heredoc 中 assert 失败会丢掉同脚本里已做的 replace（write 在最后）——一个脚本一个原子改动
+- 真机：use 麦片 → 长任务跑 → 插话"循环上限改 20" → 回复"已排队+已即时插入" → mapian inbox.md 落盘插话行 ✓
+- 测试 50/50
