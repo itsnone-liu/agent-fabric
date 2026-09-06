@@ -131,3 +131,13 @@
 - memory edit <id> <新内容>：更正任意记忆（含结晶技能）；embedding 清空后立即重算，旧向量不残留
 - 测试自足化：cluster node-b 工作区预置 demo.txt（followup 测试曾隐式依赖 handoff 测试先行恢复文件——测试顺序耦合）
 - 测试 46/46
+
+## V0.12：自我完善机制 —— 2026-09-06 第十二轮
+
+- 用户拍板边界：消耗可控（节点免费模型·internal·零 key）+ 只建议不自动改码（建议→人拍板→执行）
+- selfimprove.run_audit：确定性收集（git log/规模/pytest/TODO 扫描/记忆健康统计/TESTING 尾部）→ 组审计 goal → internal 任务到节点 → 报告推送 🔍
+- 触发：improve 命令 / fabric-improve.timer（每日，boot 30min 后首跑）
+- 配套：TASK_START 信封带 internal → daemon 不回流 LESSON（系统任务的经验不是业务经验；旧节点不识别该标志会照回流——须同步节点代码）
+- 首跑实况（2026-09-06 19:30 @mapian mimo）：体检结论=21% 记忆零命中+daemon 两个 V1 遗留；建议=①治理零命中记忆②补 harness 转发/热更新③闭环执行路径；风险=自审计建议质量受免费模型推理上限约束（系统自知）
+- 首跑即自我提醒："建议必须闭环执行，否则只收集不落地"（自动入库）
+- 测试 46/46
