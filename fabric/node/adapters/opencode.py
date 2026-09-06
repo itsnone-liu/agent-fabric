@@ -35,8 +35,10 @@ def _compose_prompt(goal: str, ctx: RunContext) -> str:
     "experience":[...], "skill":[...]}；缺省/异常时静默退化为裸 goal。
     """
     pkg = getattr(ctx, "context_package", None)
+    suffix = ("\n\n[任务结束后，最后单独一行输出：[LESSON] 本次可复用的经验或教训（一句话，给未来的自己；"
+              "确实没有则写 [LESSON] 无）]")
     if not isinstance(pkg, dict):
-        return goal
+        return goal + suffix
     blocks: list[str] = []
 
     parent = (pkg.get("task") or {}).get("parent") if isinstance(pkg.get("task"), dict) else None
@@ -50,8 +52,8 @@ def _compose_prompt(goal: str, ctx: RunContext) -> str:
             blocks.append(f"[{label}]\n" + "\n".join(f"- {t}" for t in items if t))
 
     if not blocks:
-        return goal
-    return "<context>\n" + "\n".join(blocks) + "\n</context>\n\n" + goal
+        return goal + suffix
+    return "<context>\n" + "\n".join(blocks) + "\n</context>\n\n" + goal + suffix
 
 
 class OpenCodeAdapter(HarnessAdapter):

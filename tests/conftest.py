@@ -26,6 +26,7 @@ def free_port() -> int:
 @pytest.fixture(scope="session")
 def cluster(tmp_path_factory):
     from tests.test_handoff import MakeFileAdapter, ReadFileAdapter  # 延迟导入避免循环
+    from fabric.node.adapters.echo import EchoAdapter
 
     port = free_port()
     db = tmp_path_factory.mktemp("db") / "fabric.db"
@@ -43,8 +44,8 @@ def cluster(tmp_path_factory):
                 time.sleep(0.1)
 
     # 自定义 adapter 注册为 "opencode"（router 只认 KNOWN_HARNESSES；dict 键=harness 名）
-    for nid, adapters in (("node-a", {"opencode": MakeFileAdapter()}),
-                          ("node-b", {"opencode": ReadFileAdapter()})):
+    for nid, adapters in (("node-a", {"opencode": MakeFileAdapter(), "echo": EchoAdapter()}),
+                          ("node-b", {"opencode": ReadFileAdapter(), "echo": EchoAdapter()})):
         async def _run(nid=nid, adapters=adapters):
             fn = FabricNode(node_id=nid, token="dev-token", url=f"ws://127.0.0.1:{port}",
                             adapters=adapters,

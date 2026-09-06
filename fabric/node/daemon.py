@@ -190,8 +190,7 @@ class FabricNode:
                                          **({"canceled": True} if canceled else {})},
                                         task_id=tid, node_id=self.node_id))
             # 任务完成后提交经验候选（PLAN §18：节点只交 candidate，入库由中央审）
-            tail = res.output[-200:].replace("\n", " ")
-            self._emit_memory_candidate(ws, harness, goal, res.ok, tid, tail)
+            self._emit_memory_candidate(ws, harness, goal, res.ok, tid, res.output)
         except asyncio.CancelledError:
             raise
         except Exception as e:
@@ -200,10 +199,18 @@ class FabricNode:
         finally:
             self._cancel.discard(tid)
 
-    def _emit_memory_candidate(self, ws, harness: str, goal: str, ok: bool, tid: str, tail: str):
-        content = f"[{harness}] goal={goal[:120]} → {'ok' if ok else 'failed'} @ {self.node_id}; tail: {tail}"
+    def _emit_memory_candidate(self, ws, harness: str, goal: str, ok: bool, tid: str, output: str):
+        """V0.9.2：只回流模型自标的 [LESSON] 行——goal+tail 流水与 task 记忆
+        重复且无沉淀价值（2026-09-06 用户 discard 全部流水候选后拍板）。"""
+        import re
+        # 行首或行中均可（run 命令空白折叠会吃掉换行；模型输出也可能带 markdown 包裹）
+        m = re.findall(r"\[LESSON\]\s*(.+)", output or "")
+        lesson = (m[-1] if m else "").strip()
+        if not lesson or lesson.lower() in ("无", "none", "n/a", "-"):
+            return  # 模型认为无可沉淀 → 不回流（candidate 池只留有价值的）
+        content = f"[{harness}] {lesson}（{tid} {'ok' if ok else 'failed'} @{self.node_id}）"
         env = P.make(P.T_MEMORY_CANDIDATE,
-                     {"kind": "experience", "content": content, "source_task": tid},
+                     {"kind": "experience", "content": content[:500], "source_task": tid},
                      task_id=tid, node_id=self.node_id)
         try:
             loop = asyncio.get_running_loop()

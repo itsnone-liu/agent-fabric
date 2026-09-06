@@ -24,6 +24,7 @@ _PROC_LINE = re.compile(
       | Ran\s+\d+\s+(tool|tools)\b
       | No\s+edits?\s+made\b
       | \x1b\[0m\s*$
+      | \[LESSON\]\s*            # 给记忆系统的标注行，不进用户回复
     )""", re.VERBOSE)
 
 _FENCE = "```"

@@ -127,23 +127,28 @@ def test_unknown_harness_no_node(node):
 def test_memory_candidate_pipeline(node):
     port = node
     with _client(port) as c:
-        tid = c.post("/api/say", json={"text": "run echo 记忆流水线验证任务"}).json()["task_id"]
+        # V0.9.2：候选只在输出含 [LESSON] 标注时回流（模型自判价值），流水不再自动交候选
+        goal = "记忆流水线验证\n[LESSON] echo链路：候选带LESSON才回流"
+        tid = c.post("/api/say", json={"text": f"run echo {goal}"}).json()["task_id"]
         _wait_task(c, tid)
+        tid2 = c.post("/api/say", json={"text": "run echo 无经验标注的任务"}).json()["task_id"]
+        _wait_task(c, tid2)
         deadline = time.time() + 5
         found = None
         while time.time() < deadline and not found:
             cands = c.get("/api/memory/candidates").json()["candidates"]
             found = next((x for x in cands if x.get("source_task") == tid), None)
             time.sleep(0.2)
-        assert found, "任务完成后应产生 memory candidate"
+        assert found, "含 [LESSON] 的任务应产生 memory candidate"
+        assert "echo链路" in found["content"]
+        cands = c.get("/api/memory/candidates").json()["candidates"]
+        assert not any(x.get("source_task") == tid2 for x in cands), "无 LESSON 不应回流"
         # promote → 可检索
         r = c.post("/api/memory/review", json={"id": found["id"], "action": "promote",
                                                "kind": "experience", "importance": 2})
         assert r.json().get("status") == "promoted"
         res = c.get("/api/memory", params={"q": "记忆流水线"}).json()["results"]
-        assert any("记忆流水线" in m["content"] for m in res)
-        pkg_note = c.get("/api/tasks").json()["tasks"][0]
-        assert pkg_note  # context package 已随 task.start 下发（见 events）
+        assert any("echo链路" in m["content"] for m in res)
 
 
 def test_status_and_help(node):

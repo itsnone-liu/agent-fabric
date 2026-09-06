@@ -67,8 +67,9 @@ def test_compose_prompt_renders_tiers():
     p = _compose_prompt("继续干活", ctx)
     assert "<context>" in p and "继续干活" in p
     assert "T-8" in p and "scripts/" in p and "504" in p and "部署三步" in p
-    # 无记忆时退化为裸 goal
-    assert _compose_prompt("裸目标", RunContext(workspace=Path("/tmp"))) == "裸目标"
+    # 无记忆时裸 goal + LESSON 回流指令（V0.9.2：经验回流门槛）
+    bare = _compose_prompt("裸目标", RunContext(workspace=Path("/tmp")))
+    assert bare.startswith("裸目标") and "[LESSON]" in bare
 
 
 # ---------- E2E（复用 handoff 的 cluster 模式，最小化）----------

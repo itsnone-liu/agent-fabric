@@ -8,7 +8,7 @@ def test_review_flow_e2e(cluster):
     port = cluster
     with httpx.Client(base_url=f"http://127.0.0.1:{port}", timeout=15) as c:
         # 造候选（run 一个 echo 任务会自动回流经验候选）
-        tid = c.post("/api/say", json={"text": "run @node-a echo 审核闭环验证"}).json()["task_id"]
+        tid = c.post("/api/say", json={"text": "run @node-a echo 审核闭环验证\n[LESSON] 审核流回路的经验"}).json()["task_id"]
         import time
         for _ in range(50):
             t = [t for t in c.get("/api/tasks").json()["tasks"] if t["id"] == tid]
