@@ -143,7 +143,8 @@ class FabricNode:
                                         task_id=tid, node_id=self.node_id))
 
         try:
-            ctx = RunContext(workspace=self.workspace, allow_shell=self.allow_shell)
+            ctx = RunContext(workspace=self.workspace, allow_shell=self.allow_shell,
+                             context_package=pl.get("context_package"))
             res = await adapter.start(goal, ctx, progress)
             canceled = tid in self._cancel
             await self._send(ws, P.make(P.T_TASK_RESULT,

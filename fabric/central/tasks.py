@@ -78,6 +78,11 @@ class TaskManager:
         elif t == P.T_TASK_RESULT:
             ok = bool(pl.get("ok"))
             task["result"] = {"ok": ok, "output": pl.get("output", ""), "artifacts": pl.get("artifacts", [])}
+            # 竞态兜底：节点侧 canceled 标志可能因毫秒级并发丢失；中央看到
+            # canceling 状态下的失败结果，同样认定被取消（幂等，不影响正常失败）
+            if not ok and task.get("status") == "canceling":
+                task["result"]["canceled"] = True
+                task["result"]["output"] = "（已取消）\n" + str(task["result"].get("output", ""))[:500]
             self._set(task, "done" if ok else "failed")
             await self.hub.broadcast(self._fmt_result(task))
         elif t == P.T_TASK_FAILED:

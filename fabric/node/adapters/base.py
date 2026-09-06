@@ -23,6 +23,7 @@ class RunContext:
     workspace: Path
     allow_shell: bool = False
     env: dict = field(default_factory=dict)
+    context_package: dict | None = None  # 中央记忆组装的上下文包（PLAN §12）
 
 
 ProgressFn = Callable[[str], Awaitable[None]]
