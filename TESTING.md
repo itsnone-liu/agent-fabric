@@ -192,3 +192,12 @@
 - 坑：save_task 的 INSERT 列清单是白名单——task dict 多余键静默丢弃（cancel_reason 存不上），加列必须同步改 INSERT/UPDATE；python heredoc 中 assert 失败会丢掉同脚本里已做的 replace（write 在最后）——一个脚本一个原子改动
 - 真机：use 麦片 → 长任务跑 → 插话"循环上限改 20" → 回复"已排队+已即时插入" → mapian inbox.md 落盘插话行 ✓
 - 测试 50/50
+
+## V2b：Semantic Handoff + 节点串行 —— 2026-09-06 第十八轮
+
+- 对照 GPT 2.txt（=1.txt 重发）全文 1497 行做 gap 分析：绝大部分已闭环，剩两真缺口本轮回补
+- ① Semantic Handoff（§9/12/26 Phase 3 核心）：prompt 约定（三家共享 _compose_prompt）任务结束前自报 [HANDOFF] 块（完成:/决定:/待办:）；central parse_handoff 确定性解析存 result.semantic；retry/resume 注入"[上一 run 交接]已完成/关键决定/待办（勿重做已完成部分）"——替代裸输出尾部 500 字；无块回退旧逻辑（兼容存量）
+- ② 节点并发=1 显式化（§16）：TASK_START 入队（maxsize=4，满则回 TASK_FAILED 节点忙）+ 单 _task_worker 串行 + None 哨兵退出 + 异常兜底——防连发任务 adapter._proc/_current_run 互踩
+- 真机：opencode 自报 semantic 精确（"故意未创建 c.py 留给下一步"进关键决定）；retry 新 run goal 注入结构化交接 ✓
+- 坑（重要）：python heredoc 把模块级函数插进类体中间 → 后半所有方法静默嵌套进上一个函数（AST 才看得出来，grep def 看不出）——插入类方法必须锚定类内相邻方法
+- 测试 52/52（新增 handoff 解析/注入 + 节点串行窗口不重叠 + run_id 透传）
