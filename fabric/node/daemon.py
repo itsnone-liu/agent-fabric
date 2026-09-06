@@ -58,6 +58,9 @@ class FabricNode:
         self.outbox = Outbox(outbox_path or default_outbox)
         self._cancel: set[str] = set()
         self._current_run: str | None = None
+        self._task_q: asyncio.Queue = asyncio.Queue(maxsize=4)  # §16 并发=1：节点内排队串行
+        self._ws_active = None  # worker 取最新连接（重连后旧 ws 失效）
+        self._worker: asyncio.Task | None = None
 
     # ---------- 主循环 ----------
     async def run(self):
@@ -66,6 +69,7 @@ class FabricNode:
             uri = f"{self.url}/ws/node/{self.node_id}?token={self.token}"
             try:
                 async with websockets.connect(uri, open_timeout=15, ping_interval=20, max_size=8 * 1024 * 1024) as ws:
+                    self._ws_active = ws  # worker 串行执行时取最新连接（重连后旧 ws 失效）
                     print(f"[fabric-node] 已连接 {self.url}（{self.node_id}，harnesses={sorted(self.adapters)}）", flush=True)
                     await self._hello(ws)
                     await self._flush_outbox(ws)
@@ -117,7 +121,16 @@ class FabricNode:
             env = json.loads(raw)
             t = env.get("type", "")
             if t == P.T_TASK_START:
-                asyncio.create_task(self._run_task(env, ws))
+                # §16 Node max_concurrency=1：入队由 worker 串行执行——并发起协程会
+                # 让 adapter._proc/_current_run 互相覆盖（连发两任务必踩）
+                try:
+                    self._task_q.put_nowait(env)
+                except asyncio.QueueFull:
+                    await self._send(ws, P.make(P.T_TASK_FAILED,
+                        {"error": "节点忙（队列满），请稍后重试"},
+                        task_id=env.get("task_id") or "", node_id=self.node_id))
+                if not self._worker or self._worker.done():
+                    self._worker = asyncio.create_task(self._task_worker(ws))
             elif t == P.T_TASK_CANCEL:
                 tid = env.get("task_id")
                 rid = (env.get("payload") or {}).get("run_id")
@@ -186,6 +199,18 @@ class FabricNode:
                 self.outbox.enqueue(env)
             except Exception as e:
                 print(f"[fabric-node] outbox 入队失败: {e!r}", flush=True)
+
+    async def _task_worker(self, ws):
+        """串行执行器：一次一个 run（concurrency=1）。ws 用最新连接（重连后旧 ws 失效）。
+        None 哨兵 = 优雅退出（测试/关停用）。"""
+        while True:
+            env = await self._task_q.get()
+            if env is None:
+                break
+            try:
+                await self._run_task(env, self._ws_active or ws)
+            except Exception as e:
+                print(f"[fabric-node] run 异常: {e!r}", flush=True)
 
     async def _run_task(self, env: dict, ws):
         self._current_run = (env.get("payload") or {}).get("run_id")

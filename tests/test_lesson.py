@@ -168,3 +168,87 @@ def test_send_message_and_cancel_reason():
     assert "原因已记录" in r2
     back = st.get_task(task["id"])
     assert back.get("cancel_reason") == "方案A有风险"
+
+
+def test_handoff_parse_and_inject():
+    """V2b：[HANDOFF] 自报块解析；retry 注入上一 run 结构化交接。"""
+    from fabric.central.tasks import TaskManager, parse_handoff, P
+    from fabric.central.store import Store
+    from fabric.central.registry import NodeRegistry
+    import tempfile, os, asyncio
+
+    out = ("实现了基础功能。\n[HANDOFF]\n完成: 协议层\n决定: 用 stdio 不用 http\n待办: 重连测试\n[LESSON] 无")
+    h = parse_handoff(out)
+    assert h["completed"] == ["协议层"] and h["pending"] == ["重连测试"]
+
+    sent = []
+    class _WS:
+        async def send_json(self, env): sent.append(env)
+    st = Store(os.path.join(tempfile.mkdtemp(), "h.db"))
+    reg = NodeRegistry()
+    tm = TaskManager(st, reg, hub=None)
+    reg.register("node-a", {"harnesses": ["opencode", "codex"]}, _WS())
+
+    task = tm.create("适配器开发", "opencode", "node-a", internal=True)
+    asyncio.run(tm.dispatch(task))
+    rid = sent[-1]["payload"]["run_id"]
+    asyncio.run(tm.on_event({"type": P.T_TASK_RESULT, "task_id": task["id"],
+                             "payload": {"ok": True, "output": out, "run_id": rid},
+                             "node_id": "node-a"}))
+    back = st.get_task(task["id"])
+    assert (back["result"] or {}).get("semantic", {})["pending"] == ["重连测试"]
+
+    # retry 换 codex → 新 run 的 goal 带交接块
+    t2, _ = asyncio.run(tm.retry(task["id"], harness="codex"))
+    assert "上一 run 交接" in t2["goal"] and "重连测试" in t2["goal"]
+    assert sent[-1]["payload"]["harness"] == "codex"
+
+
+def test_node_serial_execution():
+    """V2b §16：节点并发=1——连发两任务排队串行，执行窗口不重叠。"""
+    import asyncio, time, tempfile, json
+    from pathlib import Path
+    from fabric.node.daemon import FabricNode
+    from fabric.node.adapters.base import HarnessAdapter, RunContext
+    from fabric.central import tasks as tk
+
+    events = []
+    from fabric.node.adapters.base import AdapterResult
+    class SlowAdapter(HarnessAdapter):
+        name = "slow"
+        async def probe(self): return True
+        async def start(self, goal, ctx, progress):
+            events.append(("start", goal, time.monotonic()))
+            await asyncio.sleep(0.3)
+            events.append(("end", goal, time.monotonic()))
+            return AdapterResult(ok=True, output=f"done {goal}")
+        async def cancel(self): pass
+
+    class _WS:
+        def __init__(self): self.sent = []
+        async def send_json(self, env): self.sent.append(env)
+        async def send(self, raw): self.sent.append(json.loads(raw))
+
+    node = FabricNode("n1", "t", "ws://x", adapters={"slow": SlowAdapter()},
+                      workspace=str(Path(tempfile.mkdtemp())))
+    ws = _WS()
+    for i in (1, 2):
+        node._task_q.put_nowait({"task_id": f"T-{i}", "node_id": "n1",
+                                 "payload": {"task_id": f"T-{i}", "run_id": f"R-{i}",
+                                             "goal": f"任务{i}", "harness": "slow",
+                                             "context_package": {}}})
+    async def _drive():
+        w = asyncio.create_task(node._task_worker(ws))
+        await asyncio.sleep(0.9)      # 两个 0.3s 任务串行 ≈0.6s
+        await node._task_q.put(None)  # 哨兵退出
+        await w
+    asyncio.run(_drive())
+    assert len(events) == 4
+    # 任务2 start ≥ 任务1 end（串行，不重叠）
+    t1_end = [e[2] for e in events if e[0] == "end" and e[1] == "任务1"][0]
+    t2_start = [e[2] for e in events if e[0] == "start" and e[1] == "任务2"][0]
+    assert t2_start >= t1_end, "并发了！"
+    results = [e for e in ws.sent if e["type"] == tk.P.T_TASK_RESULT]
+    assert len(results) == 2 and all(e["payload"].get("ok") for e in results)
+    # run_id 随执行透传回 RESULT（V1.2）
+    assert {e["payload"].get("run_id") for e in results} == {"R-1", "R-2"}

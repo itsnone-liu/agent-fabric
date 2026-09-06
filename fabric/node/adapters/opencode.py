@@ -37,6 +37,9 @@ def _compose_prompt(goal: str, ctx: RunContext) -> str:
     pkg = getattr(ctx, "context_package", None)
     suffix = ("\n\n[工作约定] 每完成一步检查工作区 .fabric/inbox.md，若有用户插话按最新指示调整；"
               "处理过的插话请把该行从 inbox.md 删掉。\n"
+              "[任务结束前输出交接块（换 harness/续跑时下一个执行者会看到）]\n"
+              "[HANDOFF]\n完成: <已完成的一件事一行>\n决定: <重要决定一行>\n待办: <未完成的一件事一行>\n"
+              "（没有的类别整行省略）\n"
               "[任务结束后，最后单独一行输出：[LESSON] 本次可复用的经验或教训（一句话，给未来的自己；"
               "确实没有则写 [LESSON] 无）]")
     if not isinstance(pkg, dict):

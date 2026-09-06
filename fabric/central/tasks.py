@@ -49,6 +49,9 @@ class TaskManager:
         goal = (f"继续任务 {prev_id}（原目标：{prev['goal'][:200]}）。\n"
                 f"[前情提要·上一轮输出尾部]\n{tail}\n"
                 "[续跑说明] 上一轮工作区文件已恢复到本节点，请核验后在此基础上继续完成原目标，不要从零重做。")
+        prev_sem = (pr.get("semantic") or (prev.get("result") or {}).get("semantic"))
+        if prev_sem:  # Semantic Handoff：结构化交接优先于输出尾部
+            goal += f"\n[上一轮交接（结构化）]\n{render_handoff(prev_sem)}"
         if prev.get("cancel_reason"):  # V2a：中断原因注入——agent 知道为什么被打断
             goal += f"\n[用户中断原因] {str(prev['cancel_reason'])[:300]}\n（上次因此被中断，务必调整）"
         if extra_goal:
@@ -126,7 +129,8 @@ class TaskManager:
         elif t == P.T_TASK_RESULT:
             ok = bool(pl.get("ok"))
             task["result"] = {"ok": ok, "output": pl.get("output", ""), "artifacts": pl.get("artifacts", []),
-                              "handoff": pl.get("handoff")}
+                              "handoff": pl.get("handoff"),
+                              "semantic": parse_handoff(str(pl.get("output", "")) or "")}
             # 竞态兜底：节点侧 canceled 标志可能因毫秒级并发丢失；中央看到
             # canceling 状态下的失败结果，同样认定被取消（幂等，不影响正常失败）
             if not ok and task.get("status") == "canceling":
@@ -165,6 +169,10 @@ class TaskManager:
             task["harness"] = harness
         if model:
             task["model"] = model
+        prev_sem = (task.get("result") or {}).get("semantic")
+        if prev_sem:  # Semantic Handoff：上一 run 的交接块注入（GPT §12）
+            task["goal"] = (f"{task['goal']}\n\n[上一 run 交接（{task['harness']} 执行）]\n"
+                            f"{render_handoff(prev_sem)}")
         task["status"] = "pending"
         task["updated_at"] = time.time()
         self.store.save_task(task)
@@ -279,3 +287,32 @@ class TaskManager:
         files = list(((r.get("handoff") or {}).get("files") or {}))
         packed = f"\n📦 工作区：{', '.join(files[:10])}" + (f" 等{len(files)}个文件" if len(files) > 10 else "") if files else ""
         return f"{mark} {task['id']} 完成（{task.get('harness')} @ {task.get('node_id')}）{packed}\n{body}"
+
+
+def parse_handoff(output: str) -> dict | None:
+    """从 run 输出尾部解析 [HANDOFF] 自报块（Semantic Handoff §12/26）。
+    格式：[HANDOFF] 后跟 成功:/决定:/待办: 行；解析失败返回 None（调用方回退尾部文本）。"""
+    import re
+    m = re.search(r"\[HANDOFF\]\s*\n(.+?)\s*(?:\n\[LESSON\]|\Z)", output, re.S)
+    if not m:
+        return None
+    blocks = {"completed": [], "decisions": [], "pending": []}
+    for line in m.group(1).splitlines():
+        line = line.strip().lstrip("-*•").strip()
+        for key, tag in (("completed", "完成"), ("decisions", "决定"), ("pending", "待办")):
+            if line.startswith(tag) and len(line) > len(tag) + 1:
+                blocks[key].append(line.split(":", 1)[1].strip()[:120])
+    if not any(blocks.values()):
+        return None
+    return blocks
+
+
+def render_handoff(h: dict) -> str:
+    parts = []
+    if h.get("completed"):
+        parts.append("已完成：\n" + "\n".join(f"- {x}" for x in h["completed"]))
+    if h.get("decisions"):
+        parts.append("关键决定：\n" + "\n".join(f"- {x}" for x in h["decisions"]))
+    if h.get("pending"):
+        parts.append("待办（请接续完成，勿重做已完成部分）：\n" + "\n".join(f"- {x}" for x in h["pending"]))
+    return "\n".join(parts)
