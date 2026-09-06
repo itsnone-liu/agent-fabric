@@ -32,19 +32,6 @@ def create_app(db_path: str | None = None) -> FastAPI:
                                                    if n.get("status") == "online"])
     tm.session = session  # RESULT 后自动续跑排队意见（V0.9 会话化）
 
-    def _dream_loop():
-        """V0.10 定期记忆整理：启动 60s 后首跑，之后每 6h 一次（确定性零 LLM）。"""
-        import time as _t
-        _t.sleep(60)
-        while True:
-            try:
-                memory.dream()
-            except Exception as e:  # 整理失败不影响主流程
-                hub.console(f"[dream] {e!r}")
-            _t.sleep(6 * 3600)
-
-    threading.Thread(target=_dream_loop, daemon=True, name="dream").start()
-
     app = FastAPI(title="Agent Fabric Central", version="0.1.0")
     app.state.store, app.state.registry, app.state.tm, app.state.memory = store, registry, tm, memory
 
@@ -86,7 +73,34 @@ def create_app(db_path: str | None = None) -> FastAPI:
         r = memory.review(body.get("id", ""), body.get("action", ""),
                           kind=body.get("kind"), scope=body.get("scope", "user"),
                           importance=int(body.get("importance", 1)))
+        if r and body.get("action") == "promote":
+            # V0.10.1：promote 后自动判断蒸馏（fire-and-forget，不打断回复）
+            seed = str(r.get("content") or "")[:200]
+            asyncio.get_running_loop().create_task(_auto_crystallize_notify(seed))
         return r or {"error": "candidate not found"}
+
+    async def _auto_crystallize_notify(seed: str):
+        """自动蒸馏 + 结果通知（人可见可撤——不满意 memory forget）。"""
+        try:
+            focus = getattr(session, "focus", None)
+            res = await memory.auto_crystallize(seed, tm=tm, node=focus)
+            if res.get("triggered"):
+                await hub.broadcast(
+                    f"🧊 自动结晶技能 {res.get('skill_id')}（{res.get('n_sources')} 条经验"
+                    f"·{res.get('method')}）：{res.get('topic')}\n"
+                    + str(res.get("draft") or "")[:300]
+                    + "\n（不满意 memory forget 该 id）")
+        except Exception as e:
+            hub.console(f"[auto-crystallize] {e!r}")
+
+    @app.post("/api/dream")
+    async def dream_cron():
+        """外部 cron/timer 入口（V0.10.1：systemd timer 每 6h 调一次）。"""
+        try:
+            stat = memory.dream()
+            return {"ok": True, **stat}
+        except Exception as e:
+            return {"ok": False, "error": repr(e)[:200]}
 
     @app.post("/api/say")
     async def say(body: dict):
@@ -218,8 +232,12 @@ def create_app(db_path: str | None = None) -> FastAPI:
             for cid in ids:
                 r = memory.review(cid, action if action == "discard" else "promote")
                 (done if r else skipped).append(cid)
+                if r and action == "promote":  # V0.10.1 自动蒸馏（同 REST 路径）
+                    asyncio.get_running_loop().create_task(
+                        _auto_crystallize_notify(str(r.get("content") or "")[:200]))
             return (f"✅ {action} 完成 {len(done)} 条"
-                    + (f"；未找到/未变更 {len(skipped)} 条" if skipped else "")), None
+                    + (f"；未找到/未变更 {len(skipped)} 条" if skipped else "")
+                    + ("；素材够会自动结晶（稍候推送）" if action == "promote" and done else "")), None
         return help_text(), None
 
     def _fmt_status() -> str:

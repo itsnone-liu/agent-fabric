@@ -314,6 +314,44 @@ class MemoryManager:
             self.store.db.commit()
         return stat
 
+    # ---- auto_crystallize：promote 后自动判断是否值得蒸馏（V0.10.1）----
+    _last_auto = 0.0
+
+    async def auto_crystallize(self, seed: str, tm=None, node: str | None = None,
+                               min_sources: int = 3, cooldown: float = 3600.0) -> dict:
+        """新经验 promote 后的自动蒸馏判断（用户 2026-09-06：自动进行）。
+
+        触发条件（全满足）：①冷却期外 ②素材 ≥3 条 ③无高相似已有 skill
+        （cos≥0.85 判重——同主题技能已存在就不再结）。蒸馏走节点免费模型，
+        central 零 LLM key。返回 {"triggered": bool, ...}。
+        """
+        import time as _t
+        now = _t.time()
+        if now - self._last_auto < cooldown:
+            return {"triggered": False, "reason": "cooldown"}
+        cand = [m for m in self.search(seed, k=10)
+                if m.get("kind") in ("experience", "task") and m.get("_score", 0.0) >= 0.25]
+        if len(cand) < min_sources:
+            return {"triggered": False, "reason": f"素材不足({len(cand)}<{min_sources})"}
+        # 判重：已有 skill 与种子语义足够近 → 跳过
+        if self.embedder is not None and not getattr(self.embedder, "disabled", False):
+            try:
+                seed_vec = np.asarray(self.embedder.embed([seed])[0], dtype=np.float32)
+                for m in self.store.all_memories(500):
+                    if m.get("kind") != "skill" or not m.get("embedding"):
+                        continue
+                    v = np.frombuffer(m["embedding"], dtype=np.float32)
+                    if len(v) == len(seed_vec) and float(seed_vec @ v) >= 0.85:
+                        return {"triggered": False, "reason": f"已有同主题技能 {m['id']}"}
+            except Exception:
+                pass  # 判重失败不阻塞——宁可多结一次
+        self._last_auto = now
+        topic = seed.strip()[:40] or "自动结晶"
+        res = await self.crystallize(topic, tm=tm, node=node, min_sources=min_sources)
+        out = {"triggered": bool(res.get("ok")), "topic": topic}
+        out.update({k: res.get(k) for k in ("skill_id", "n_sources", "method", "draft", "hint")})
+        return out
+
     # ---- crystallize：经验→技能结晶（V0.10：节点免费模型蒸馏，失败退拼接）----
     async def crystallize(self, query: str, tm=None, node: str | None = None,
                           min_sources: int = 2, k: int = 10) -> dict:

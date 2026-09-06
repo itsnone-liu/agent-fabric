@@ -112,3 +112,29 @@ def test_crystallize_fallback_when_task_fails(mem):
         mem.crystallize("matplotlib 中文", tm=FakeTM()))
     assert res["ok"] and res["method"] == "拼接"
     assert "经验甲" in res["draft"]
+
+
+def test_auto_crystallize_cooldown_and_dedup(mem):
+    import asyncio as _a
+    v = (np.ones(512, dtype=np.float32) / np.sqrt(512)).tolist()  # 与 _SameVec 查询同向
+    _add(mem, "experience", "matplotlib 中文字体 rcParams 配置", vec=v)
+    _add(mem, "experience", "matplotlib 中文字体 rcParams SimHei 方案", vec=v)
+    _add(mem, "experience", "matplotlib 中文字体 rcParams 负号 unicode_minus", vec=v)
+    # 素材不足（<3）不触发（BM25-only 路径）
+    m2 = MemoryManager(mem.store)
+    m2.embedder = mem.embedder
+    r = _a.run(m2.auto_crystallize("完全无关的主题 xyzzy", tm=None))
+    assert not r["triggered"] and "素材不足" in r["reason"]
+    # 已有同主题 skill（cos≥0.85）→ 跳过（常向量 embedder：任何查询与库内 cos=1）
+    class _SameVec:
+        disabled = False
+
+        def embed(self, texts):
+            return [np.ones(512, dtype=np.float32) / np.sqrt(512) for _ in texts]
+
+    _add(mem, "skill", "【技能】matplotlib 中文字体 rcParams 配置与负号处理",
+        vec=(np.ones(512, dtype=np.float32) / np.sqrt(512)).tolist())
+    m3 = MemoryManager(mem.store)
+    m3.embedder = _SameVec()
+    r = _a.run(m3.auto_crystallize("matplotlib 中文字体配置", tm=None))
+    assert not r["triggered"] and "同主题" in r["reason"]

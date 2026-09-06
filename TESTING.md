@@ -116,3 +116,10 @@
 - 坑：批量 replace 把 create 的 internal 参数误注入 resume 的任务字典（签名无此参）→ NameError 空响应；FakeTM 签名要跟 tm.create 同步
 - scope 列已建未启用（单项目下过滤是伪需求，第二个项目上来再开）
 - 测试 43/43
+
+## V0.10.1：dream cron 化 + 蒸馏自动判断 —— 2026-09-06 第十轮
+
+- dream 去常驻线程改外部驱动：POST /api/dream + systemd fabric-dream.timer（boot 10min 后首跑、每 6h、Persistent）
+- auto_crystallize：promote（REST/say 两路径）后 fire-and-forget 自动判断蒸馏——冷却 1h、素材≥3、无 cos≥0.85 同主题 skill 才触发；触发后 🧢 推送结果（人可见可撤）
+- LLM key 问题：零新凭据——蒸馏走节点 opencode 免费模型，central 零 LLM key（能力租借自节点）
+- 测试 44/44（素材不足/同主题判重两条路径分别用 BM25-only 与常向量 embedder 验证）
