@@ -172,3 +172,14 @@
 - ③节点上报 model_profiles（dsh=settings.yaml agent-default-model；codex=config.toml model 行；opencode=AF_OPENCODE_MODEL；pyyaml 入依赖）——central 零 key：只报名不报凭据；model 命令查询显示档案
 - 真机：tangyuan 档案 dsh=dashscope/deepseek-v4-flash-0731;codex=gpt-5.6-luna；零命中 21%→17%（task 流水 30 条清出，剩余为真经验/技能）
 - 测试 48/48（dream 清空语义、parent 读 tasks 表、跨任务结晶门槛各更新）
+
+## V1.2：Task/Run 分离 —— 2026-09-06 第十六轮
+
+- runs 表（R-xxx）：harness+model 对 task 的一次执行；task.status 由最新 run 派生
+- 协议保守演进：TASK_START/CANCEL/RESULT payload 加 run_id（事件类型不动，节点同步升级即可）
+- per-run cancel：daemon 持 _current_run，run_id 不匹配的 cancel 视为过期请求忽略（防旧 cancel 误杀新 run）
+- retry <T-id> [harness] [model]：终态任务同 task 新 run——"换 codex 再试"一步到位
+- task 面板显示 runs 明细
+- 真 bug 顺手修：create() 的 task dict 从未带 internal 键（存库恒 0，蒸馏任务静默靠巧合）；daemon RESULT 回包补 run_id（central 据此落 run 终态）
+- 真机：retry T-6419cb dsh → 同 task 双 run 轨迹（codex 建 v12b.txt → dsh 复核"一致无需覆盖"——换 harness 复核场景自然涌现）
+- 测试 49/49
