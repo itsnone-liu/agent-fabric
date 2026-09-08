@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 import json
+import os
 import time
 import uuid
+import asyncio
 
 from ..shared import protocol as P
 from .channels import ChannelHub
@@ -147,6 +149,13 @@ class TaskManager:
                 except Exception:
                     pass
             self._set(task, "done" if ok else "failed")
+            if not ok:
+                # 配额耗尽不是普通失败：同一轮自动切 codex，并恢复 handoff，
+                # 避免用户必须手动发送“继续”。仅 dsh→codex，codex失败不再递归切换。
+                await self._auto_quota_failover(task)
+            elif task.get("harness") == "codex":
+                # codex 接管后，等待原 dsh 配额窗口恢复，再自动回切 glm/dsh。
+                await self._schedule_dsh_return(task)
             # V1.1 State/Memory 分离：task 流水不再进 memories 表（State 留
             # tasks 表；resume 父记忆改读 tasks 表——见 memory.build_context_package）
             if not task.get("internal"):
@@ -253,6 +262,43 @@ class TaskManager:
         self._prog_last = now
         chunk, self._prog_buf = self._prog_buf[-6:], []
         await self.hub.broadcast("⏳ 过程：\n" + "\n".join(chunk))
+
+    async def _schedule_dsh_return(self, task: dict):
+        """codex 轮完成后延迟自动回 dsh；下一轮任务会继续使用 glm 配置。"""
+        delay = float(os.getenv("AF_QUOTA_RETURN_SECONDS", "18000"))
+        await self.hub.broadcast(f"⏳ codex 已完成，{int(delay/3600)}小时后自动切回 dsh(glm)；无需人工继续")
+        async def later():
+            await asyncio.sleep(delay)
+            try:
+                new_task, _ = await self.resume(task["id"], node_id=task.get("node_id"),
+                                                harness="dsh",
+                                                extra_goal="配额窗口已恢复，自动切回 dsh(glm)；请继续完成原目标，保留 codex 已完成内容。")
+                if new_task:
+                    await self.hub.broadcast(f"🔄 dsh(glm) 配额窗口恢复，已自动切回续跑 → {new_task['id']}")
+            except Exception as e:
+                await self.hub.broadcast(f"⚠️ 自动切回 dsh 失败：{e!r}；可手动 resume {task['id']}")
+        asyncio.create_task(later())
+
+    async def _auto_quota_failover(self, task: dict):
+        """配额失败自动切 codex；codex 失败或非配额失败保持原终态。"""
+        if task.get("harness") != "dsh" or not task.get("auto_resume", True):
+            return
+        text = str((task.get("result") or {}).get("output") or "")
+        quota = any(x in text.lower() for x in ("1308", "quota", "usage limit", "达到5小时", "额度", "配额"))
+        if not quota:
+            return
+        try:
+            task["harness"] = "codex"
+            task["status"] = "pending"
+            task["resume_after"] = time.time()
+            self.store.save_task(task)
+            new_task, msg = await self.resume(task["id"], node_id=task.get("node_id"),
+                                              harness="codex",
+                                              extra_goal="上一模型触发配额限制，已自动切换 codex；请从交接状态继续，不要重做已完成工作。")
+            if new_task:
+                await self.hub.broadcast(f"🔁 检测到模型额度耗尽，已自动切换 codex 续跑 → {new_task['id']}")
+        except Exception as e:
+            await self.hub.broadcast(f"⚠️ 自动切 codex 失败：{e!r}；可手动 resume {task['id']}")
 
     async def _auto_followup(self, task: dict):
         """任务终态后，把会话中排队的追加意见自动续跑（resume 链）。"""
