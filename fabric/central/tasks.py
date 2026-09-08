@@ -288,8 +288,6 @@ class TaskManager:
         if not quota:
             return
         try:
-            task["harness"] = "codex"
-            task["status"] = "pending"
             task["resume_after"] = time.time()
             self.store.save_task(task)
             new_task, msg = await self.resume(task["id"], node_id=task.get("node_id"),
