@@ -153,9 +153,11 @@ class TaskManager:
                 # 配额耗尽不是普通失败：同一轮自动切 codex，并恢复 handoff，
                 # 避免用户必须手动发送“继续”。仅 dsh→codex，codex失败不再递归切换。
                 await self._auto_quota_failover(task)
-            elif task.get("harness") == "codex":
-                # codex 接管后，等待原 dsh 配额窗口恢复，再自动回切 glm/dsh。
-                await self._schedule_dsh_return(task)
+            elif task.get("harness") == "codex" and task.get("parent_task"):
+                # 仅对自动续跑产生的 codex 任务回切；用户主动 codex 任务不受影响。
+                parent = self.store.get_task(task.get("parent_task"))
+                if parent and parent.get("harness") == "dsh":
+                    await self._schedule_dsh_return(task)
             # V1.1 State/Memory 分离：task 流水不再进 memories 表（State 留
             # tasks 表；resume 父记忆改读 tasks 表——见 memory.build_context_package）
             if not task.get("internal"):
@@ -294,6 +296,8 @@ class TaskManager:
                                               harness="codex",
                                               extra_goal="上一模型触发配额限制，已自动切换 codex；请从交接状态继续，不要重做已完成工作。")
             if new_task:
+                new_task["quota_failover"] = True
+                self.store.save_task(new_task)
                 await self.hub.broadcast(f"🔁 检测到模型额度耗尽，已自动切换 codex 续跑 → {new_task['id']}")
         except Exception as e:
             await self.hub.broadcast(f"⚠️ 自动切 codex 失败：{e!r}；可手动 resume {task['id']}")
