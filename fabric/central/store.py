@@ -38,7 +38,7 @@ CREATE TABLE IF NOT EXISTS tasks(
   id TEXT PRIMARY KEY, goal TEXT, harness TEXT, node_id TEXT,
   status TEXT, result TEXT, created_at REAL, updated_at REAL,
   internal INTEGER DEFAULT 0, cancel_reason TEXT,
-  auto_resume INTEGER DEFAULT 1, resume_after REAL);
+  auto_resume INTEGER DEFAULT 1, resume_after REAL, parent_task TEXT);
 CREATE TABLE IF NOT EXISTS runs(
   id TEXT PRIMARY KEY, task_id TEXT, harness TEXT, model TEXT,
   status TEXT, result TEXT, started_at REAL, ended_at REAL);
@@ -69,6 +69,7 @@ class Store:
         self._migrate_memories_embedding()
         self._migrate_tasks_cancel_reason()
         self._migrate_tasks_auto_resume()
+        self._migrate_tasks_parent()
         self.db.commit()
         self._lock = threading.Lock()
 
@@ -76,14 +77,14 @@ class Store:
     def save_task(self, task: dict):
         with self._lock:
             self.db.execute(
-                "INSERT INTO tasks(id,goal,harness,node_id,status,result,created_at,updated_at,internal,cancel_reason,auto_resume,resume_after) VALUES(?,?,?,?,?,?,?,?,?,?,?,?) "
+                "INSERT INTO tasks(id,goal,harness,node_id,status,result,created_at,updated_at,internal,cancel_reason,auto_resume,resume_after,parent_task) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?) "
                 "ON CONFLICT(id) DO UPDATE SET goal=excluded.goal,harness=excluded.harness,node_id=excluded.node_id,"
-                "status=excluded.status,result=excluded.result,updated_at=excluded.updated_at,internal=excluded.internal,cancel_reason=excluded.cancel_reason,auto_resume=excluded.auto_resume,resume_after=excluded.resume_after",
+                "status=excluded.status,result=excluded.result,updated_at=excluded.updated_at,internal=excluded.internal,cancel_reason=excluded.cancel_reason,auto_resume=excluded.auto_resume,resume_after=excluded.resume_after,parent_task=excluded.parent_task",
                 (task["id"], task.get("goal"), task.get("harness"), task.get("node_id"),
                  task.get("status"), json.dumps(task.get("result"), ensure_ascii=False),
                  task.get("created_at"), task.get("updated_at"), 1 if task.get("internal") else 0,
                  task.get("cancel_reason"), 1 if task.get("auto_resume", True) else 0,
-                 task.get("resume_after")))
+                 task.get("resume_after"), task.get("parent_task")))
             self.db.commit()
 
     # ---- V1.2 Task/Run 分离：runs 访问层 ----
@@ -204,6 +205,11 @@ class Store:
         if "cancel_reason" not in cols:
             self.db.execute("ALTER TABLE tasks ADD COLUMN cancel_reason TEXT")
             self.db.commit()
+
+    def _migrate_tasks_parent(self):
+        cols = {r[1] for r in self.db.execute("PRAGMA table_info(tasks)")}
+        if "parent_task" not in cols:
+            self.db.execute("ALTER TABLE tasks ADD COLUMN parent_task TEXT")
 
     def _migrate_tasks_auto_resume(self):
         """V3: 配额切换后的自动续跑开关与延迟时间(默认开启)。"""
